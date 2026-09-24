@@ -1,0 +1,159 @@
+﻿# ASSUMPTIONS.md – Judgment Calls in core/
+
+This document records every non-obvious decision made while building the
+`core/` package for the water-distribution-network PySide6 migration (Step 1).
+
+---
+
+## 1. Tank Inflow Sign Convention
+
+**Decision**: `TANK_INFLOW_SIGN = +1`.
+
+A pipe whose **end** node is a tank contributes `+1` (positive) to the tank
+row of the A matrix (inflow is positive). A pipe whose **start** node is a
+tank contributes `−1` (outflow is negative). This exactly matches the junction
+continuity convention used by the legacy code for junctions.
+
+**Why not the legacy tank sign?**  
+The legacy code only wrote `+1` when a tank was the *start* of a pipe and
+wrote nothing when a tank was the *end*. This left the tank row all-zero for
+networks where water only flows *into* the tank, making those networks appear
+singular even when they are well-posed. The corrected sign is a **bug fix**.
+
+**Rationale for +1 = inflow**  
+From the mass-balance perspective the tank's state variable (pressure / water
+level) is driven by net inflow. Matching the junction sign keeps the physical
+interpretation consistent across node types.
+
+**Flipping the sign**: if a future paper revision or regulatory standard
+requires outflow-positive, change `TANK_INFLOW_SIGN = +1` to
+`TANK_INFLOW_SIGN = −1` in `core/matrices.py`; no other code needs to change.
+
+---
+
+## 2. Tanks Counted as Supply Nodes (Validation)
+
+**Decision**: tanks are treated as supply nodes in the connectivity check
+(`validate_network`).
+
+A tank can supply or receive water; it provides a non-trivial boundary
+condition (known pressure trajectory). Therefore a component that contains
+a tank but no reservoir is treated as *having a supply* and is **not** flagged
+as supply-free.
+
+---
+
+## 3. Symbolic String Format (kept from legacy)
+
+The following symbolic strings are kept exactly as in the legacy code:
+
+| Matrix | Entry | String |
+|--------|-------|--------|
+| G | non-pumped pipe i (1-based) | `f"-C_aQ{i+1}|Q{i+1}|"` |
+| G | pumped pipe | `"-S_puG_pu(Q_pu)"` |
+| A | non-pumped Pl | `f"c{i+1}"` |
+| A | non-pumped Pr | `f"-c{i+1}"` |
+| A | pump diagonal | `f"1-s{sym_idx}"` |
+| A | pump start pressure | `f"-s{sym_idx}"` |
+| A | pump end pressure | `f"s{sym_idx}"` |
+| A | pipe end-side flow | `f"1-s{i+1}"` |
+| A | pipe end-side Pr | `f"s{i+1}"` |
+| A | pipe end-side node | `f"-s{i+1}"` |
+| F | reservoir i (0-based) | `f"-P_{chr(97+i)}"` i.e. `-P_a`, `-P_b`, … |
+
+Symbol numbering: `c{i+1}` and `s{i+1}` index over **non-pumped** pipes
+(1-based, in creation order); pump symbols continue at `s{N_np + i + 1}` where
+`i` is 0-based within the pumped list. This is identical to the legacy
+numbering when normal pipes come before pumps.
+
+---
+
+## 4. Column Ordering Bug Fix (ORDER BUG)
+
+**Legacy assumption**: the first `non_pumped` pipes in the input list are the
+non-pumped ones, and column indices are derived by parsing the integer suffix
+of pipe/node IDs (e.g., `int("P3"[1:])` → 3).
+
+**New approach**: pipes are partitioned into `non_pumped` and `pumped` lists
+(preserving creation order within each group). All column indices are derived
+from position in those lists via `pipe_flow_col` and `node_col` dictionaries.
+No IDs are ever parsed. The resulting matrix is independent of the order in
+which pipes were added to the network.
+
+---
+
+## 5. Numeric Pencil Evaluation (s=1, c=1)
+
+**Substitution rules for `numeric_pencil`**:
+
+- All switch variables `s_i` → 1 (all valves open, all pumps on).
+- All conductance coefficients `c_i` → 1.
+- Expressions like `1-s_i` → 0; `s_i` → 1; `-s_i` → -1; `c_i` → 1.
+
+This represents the fully-activated network state (worst case for regularity
+testing: if it is singular here it is structurally singular).
+
+---
+
+## 6. Regularity Check — Tolerance and Sampling
+
+**Method**: evaluate `np.linalg.slogdet(λE − A)` at `_REGULARITY_N_SAMPLES = 8`
+complex values of λ, drawn from a **fixed** RNG seed (`_REGULARITY_SEED = 42`).
+
+**Tolerance**: `_REGULARITY_TOL = 1e-7`.  
+A pencil is declared regular if `|det| > 1e-7` for at least one sample.
+
+**Why `slogdet`?**  
+`slogdet` returns `(sign, log|det|)`. It never overflows for large matrices,
+unlike `np.linalg.det`. We check `sign != 0` (non-trivially-zero determinant)
+AND `logabsdet > log(tol)`.
+
+**Why multiple samples?**  
+A single λ might accidentally coincide with an eigenvalue of a *regular* pencil
+and give zero determinant. Using 8 samples from the complex plane (with
+non-zero imaginary parts to avoid real eigenvalues) makes a false-negative
+extremely unlikely.
+
+**Limitation**: this is a heuristic test, not a formal algebraic rank check.
+For production use, a Smith-McMillan form or Kronecker structure analysis
+would be more rigorous. That is left for a later step.
+
+---
+
+## 7. Pump Cycle Detection — Cyclomatic Number Method
+
+**Paper method**: merge all supply nodes (reservoirs + tanks) into a single
+virtual super-node called `__supply__`, build an undirected multigraph of pump
+edges only, and for each connected component compute:
+
+```
+cyclomatic_number = E − V + 1
+```
+
+where E = number of pump edges, V = number of vertices, and the "+1" assumes
+the component is connected (C=1). A cyclomatic number > 0 means there is at
+least one independent cycle in the pump sub-graph, which is a structural
+problem for the switched-DAE formulation.
+
+**Cross-check**: the rank of the pump-column block of the modified incidence
+matrix is also computed. If `rank < number_of_pump_edges` but the cyclomatic
+method did not flag a cycle, an additional warning is emitted.
+
+---
+
+## 8. Incidence Matrix Signs
+
+Convention: −1 at the **start** (initial) node of each edge, +1 at the
+**end** (terminal) node. Each column therefore sums to 0.
+
+Reference row for the *reduced* incidence: first reservoir, else first tank,
+else first node in creation order.
+
+---
+
+## 9. Node ID Auto-Generation
+
+Prefixes: `J` (junction), `T` (tank), `R` (reservoir), `P` (pipe).
+Counters track the **maximum issued number**, so manual IDs (supplied via
+`id=` keyword) are respected and auto-generated IDs never collide with them
+after `from_dict` round-trips.
