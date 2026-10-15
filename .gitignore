@@ -24,3 +24,7 @@ Thumbs.db
 
 # Qt / misc
 *.qml.qmlc
+
+# Local references and internal working notes
+reference/
+PROJECT_CONTEXT.md
