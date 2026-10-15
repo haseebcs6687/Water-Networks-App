@@ -1,4 +1,4 @@
-﻿"""File I/O for saving and loading Water Network project files (.wnet)."""
+"""File I/O for saving and loading Water Network project files (.wnet)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from core.models import Network
 
 
 SUPPORTED_FORMAT = "water-network"
-CURRENT_VERSION = 1
+CURRENT_VERSION = 2
+SUPPORTED_VERSIONS = {1, 2}
 
 
 def save_project(
@@ -88,8 +89,10 @@ def load_project(path: str | Path) -> Tuple[Network, Dict[str, Tuple[float, floa
         raise ValueError(f"Invalid format identifier {fmt!r}, expected {SUPPORTED_FORMAT!r}.")
 
     ver = payload.get("version")
-    if ver != CURRENT_VERSION:
-        raise ValueError(f"Unsupported project file version {ver!r}, expected {CURRENT_VERSION}.")
+    if ver not in SUPPORTED_VERSIONS:
+        raise ValueError(
+            f"Unsupported project file version {ver!r}, expected one of {sorted(SUPPORTED_VERSIONS)}."
+        )
 
     nodes_data = payload.get("nodes")
     if not isinstance(nodes_data, list):

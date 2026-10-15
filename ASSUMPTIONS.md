@@ -1,4 +1,4 @@
-﻿# ASSUMPTIONS.md – Judgment Calls in core/
+# ASSUMPTIONS.md – Judgment Calls in core/
 
 This document records every non-obvious decision made while building the
 `core/` package for the water-distribution-network PySide6 migration (Step 1).
@@ -157,3 +157,15 @@ Prefixes: `J` (junction), `T` (tank), `R` (reservoir), `P` (pipe).
 Counters track the **maximum issued number**, so manual IDs (supplied via
 `id=` keyword) are respected and auto-generated IDs never collide with them
 after `from_dict` round-trips.
+
+---
+
+## 10. Physical parameters and .wnet v2
+
+- **SI Units**: All physical network quantities are expressed in standard SI units: pipe length ($m$), pipe diameter ($m$), pipe roughness ($m$), node elevation ($m$), and reservoir total head ($m$).
+- **None = Not Set (No Invented Defaults)**: Unset parameters default to `None`. No arbitrary default numbers (e.g., standard pipe diameters or lengths) are ever invented or assumed.
+- **Reservoir Head Semantics**: `head` represents the total hydraulic head of the water surface ($H_R$, in metres) and is valid only for reservoirs ($P_R = H_R - z$, where $z$ is elevation). Attempting to set `head` on junctions or tanks raises `ValueError`.
+- **Legacy Node Elevations as Placeholders**: v1.0 files stored default elevations of `50.0 m` on all nodes. These numbers serve as structural placeholders rather than true surveyed data.
+- **Roughness Interpretation**: Pipe roughness specifies absolute equivalent sand roughness ($\varepsilon$, in metres) for Darcy-Weisbach calculations, not dimensionless coefficients.
+- **Backward Compatibility and Schema Evolution**: Format version 2 extends `.wnet` to persist physical parameters while preserving full backward compatibility with version 1 files. Unknown keys in node, pipe, or top-level objects are ignored during deserialization to maintain forward resilience.
+

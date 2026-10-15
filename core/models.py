@@ -1,4 +1,4 @@
-﻿"""Data models for water distribution networks.
+"""Data models for water distribution networks.
 
 Classes
 -------
@@ -12,8 +12,70 @@ Network
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
+
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+
+def _check_finite_number(name: str, val: Any) -> Optional[float]:
+    """Check that val is None or a finite real number (not bool, nan, inf)."""
+    if val is None:
+        return None
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        raise ValueError(f"{name} must be a number or None, got {val!r}")
+    f_val = float(val)
+    if not math.isfinite(f_val):
+        raise ValueError(f"{name} must be a finite number, got {val!r}")
+    return f_val
+
+
+def _validate_node_fields(
+    node_type: str,
+    capacity: Any,
+    elevation: Any,
+    head: Any,
+) -> None:
+    c = _check_finite_number("capacity", capacity)
+    if c is not None and c < 0:
+        raise ValueError(f"capacity must be >= 0, got {c}")
+
+    _check_finite_number("elevation", elevation)
+
+    h = _check_finite_number("head", head)
+    if h is not None and node_type != "reservoir":
+        raise ValueError(f"head is only allowed on reservoirs, not on {node_type!r}")
+
+
+def _validate_pipe_fields(
+    length: Any,
+    diameter: Any,
+    roughness: Any,
+    pump_power: Any = 0.0,
+    has_pump: Any = False,
+) -> None:
+    l_ = _check_finite_number("length", length)
+    if l_ is not None and l_ <= 0:
+        raise ValueError(f"length must be > 0, got {l_}")
+
+    d = _check_finite_number("diameter", diameter)
+    if d is not None and d <= 0:
+        raise ValueError(f"diameter must be > 0, got {d}")
+
+    r = _check_finite_number("roughness", roughness)
+    if r is not None and r < 0:
+        raise ValueError(f"roughness must be >= 0, got {r}")
+
+    p = _check_finite_number("pump_power", pump_power)
+    if p is not None and p < 0:
+        raise ValueError(f"pump_power must be >= 0, got {p}")
+
+    if not isinstance(has_pump, bool):
+        raise ValueError(f"has_pump must be a boolean, got {has_pump!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -27,8 +89,9 @@ class Node:
 
     id: str
     type: str
-    capacity: float = 1000.0
-    elevation: float = 50.0
+    capacity: Optional[float] = 1000.0
+    elevation: Optional[float] = 50.0
+    head: Optional[float] = None
 
     _VALID_TYPES = frozenset({"junction", "tank", "reservoir"})
 
@@ -37,6 +100,7 @@ class Node:
             raise ValueError(
                 f"Node type must be one of {sorted(self._VALID_TYPES)}, got {self.type!r}"
             )
+        _validate_node_fields(self.type, self.capacity, self.elevation, self.head)
 
 
 @dataclass
@@ -48,6 +112,14 @@ class Pipe:
     end: str
     has_pump: bool = False
     pump_power: float = 0.0
+    length: Optional[float] = None
+    diameter: Optional[float] = None
+    roughness: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        _validate_pipe_fields(
+            self.length, self.diameter, self.roughness, self.pump_power, self.has_pump
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +186,9 @@ class Network:
         self,
         type: str,  # noqa: A002
         id: Optional[str] = None,  # noqa: A002
-        capacity: float = 1000.0,
-        elevation: float = 50.0,
+        capacity: Optional[float] = 1000.0,
+        elevation: Optional[float] = 50.0,
+        head: Optional[float] = None,
     ) -> Node:
         """Add a node and return it."""
         prefix_map = {"junction": "J", "tank": "T", "reservoir": "R"}
@@ -125,6 +198,8 @@ class Network:
                 f"Node type must be one of {sorted(prefix_map)}, got {type!r}"
             )
 
+        _validate_node_fields(type, capacity, elevation, head)
+
         if id is None:
             id = self._next_id(prefix)
         elif id in self._node_ids():
@@ -132,7 +207,7 @@ class Network:
         else:
             self._bump_counter(id)
 
-        node = Node(id=id, type=type, capacity=capacity, elevation=elevation)
+        node = Node(id=id, type=type, capacity=capacity, elevation=elevation, head=head)
         self._nodes.append(node)
         return node
 
@@ -143,6 +218,9 @@ class Network:
         id: Optional[str] = None,  # noqa: A002
         has_pump: bool = False,
         pump_power: float = 0.0,
+        length: Optional[float] = None,
+        diameter: Optional[float] = None,
+        roughness: Optional[float] = None,
     ) -> Pipe:
         """Add a pipe and return it."""
         if start == end:
@@ -154,6 +232,8 @@ class Network:
         if end not in node_ids:
             raise ValueError(f"Unknown end node: {end!r}")
 
+        _validate_pipe_fields(length, diameter, roughness, pump_power, has_pump)
+
         if id is None:
             id = self._next_id("P")
         elif id in self._pipe_ids():
@@ -161,8 +241,79 @@ class Network:
         else:
             self._bump_counter(id)
 
-        pipe = Pipe(id=id, start=start, end=end, has_pump=has_pump, pump_power=pump_power)
+        pipe = Pipe(
+            id=id,
+            start=start,
+            end=end,
+            has_pump=has_pump,
+            pump_power=pump_power,
+            length=length,
+            diameter=diameter,
+            roughness=roughness,
+        )
         self._pipes.append(pipe)
+        return pipe
+
+    def update_node(self, node_id: str, **fields: Any) -> Node:
+        """Update properties of an existing node.
+
+        Allowed fields: 'elevation', 'capacity', 'head'.
+        """
+        node = next((n for n in self._nodes if n.id == node_id), None)
+        if node is None:
+            raise ValueError(f"Unknown node ID: {node_id!r}")
+
+        allowed = {"elevation", "capacity", "head"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"Unknown field(s) for node: {sorted(unknown)}")
+
+        new_capacity = fields["capacity"] if "capacity" in fields else node.capacity
+        new_elevation = fields["elevation"] if "elevation" in fields else node.elevation
+        new_head = fields["head"] if "head" in fields else node.head
+
+        _validate_node_fields(node.type, new_capacity, new_elevation, new_head)
+
+        if "capacity" in fields:
+            node.capacity = new_capacity
+        if "elevation" in fields:
+            node.elevation = new_elevation
+        if "head" in fields:
+            node.head = new_head
+        return node
+
+    def update_pipe(self, pipe_id: str, **fields: Any) -> Pipe:
+        """Update properties of an existing pipe.
+
+        Allowed fields: 'length', 'diameter', 'roughness', 'has_pump', 'pump_power'.
+        """
+        pipe = next((p for p in self._pipes if p.id == pipe_id), None)
+        if pipe is None:
+            raise ValueError(f"Unknown pipe ID: {pipe_id!r}")
+
+        allowed = {"length", "diameter", "roughness", "has_pump", "pump_power"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"Unknown field(s) for pipe: {sorted(unknown)}")
+
+        new_length = fields["length"] if "length" in fields else pipe.length
+        new_diameter = fields["diameter"] if "diameter" in fields else pipe.diameter
+        new_roughness = fields["roughness"] if "roughness" in fields else pipe.roughness
+        new_has_pump = fields["has_pump"] if "has_pump" in fields else pipe.has_pump
+        new_pump_power = fields["pump_power"] if "pump_power" in fields else pipe.pump_power
+
+        _validate_pipe_fields(new_length, new_diameter, new_roughness, new_pump_power, new_has_pump)
+
+        if "length" in fields:
+            pipe.length = new_length
+        if "diameter" in fields:
+            pipe.diameter = new_diameter
+        if "roughness" in fields:
+            pipe.roughness = new_roughness
+        if "has_pump" in fields:
+            pipe.has_pump = new_has_pump
+        if "pump_power" in fields:
+            pipe.pump_power = new_pump_power
         return pipe
 
     def remove_pipe(self, pipe_id: str) -> None:
@@ -199,6 +350,7 @@ class Network:
                     "type": n.type,
                     "capacity": n.capacity,
                     "elevation": n.elevation,
+                    "head": n.head,
                 }
                 for n in self._nodes
             ],
@@ -209,6 +361,9 @@ class Network:
                     "end": p.end,
                     "has_pump": p.has_pump,
                     "pump_power": p.pump_power,
+                    "length": p.length,
+                    "diameter": p.diameter,
+                    "roughness": p.roughness,
                 }
                 for p in self._pipes
             ],
@@ -225,6 +380,7 @@ class Network:
                 id=nd["id"],
                 capacity=nd.get("capacity", 1000.0),
                 elevation=nd.get("elevation", 50.0),
+                head=nd.get("head", None),
             )
         for pd_ in data.get("pipes", []):
             net.add_pipe(
@@ -233,10 +389,14 @@ class Network:
                 id=pd_["id"],
                 has_pump=pd_.get("has_pump", False),
                 pump_power=pd_.get("pump_power", 0.0),
+                length=pd_.get("length", None),
+                diameter=pd_.get("diameter", None),
+                roughness=pd_.get("roughness", None),
             )
         if "counters" in data and isinstance(data["counters"], dict):
             net._counters.update(data["counters"])
         return net
+
 
     def __repr__(self) -> str:
         return f"Network({len(self._nodes)} nodes, {len(self._pipes)} pipes)"
