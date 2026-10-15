@@ -85,6 +85,8 @@ class MainWindow(QMainWindow):
         self.build_panel.pipe_added.connect(self._on_add_pipe)
         self.build_panel.node_deleted.connect(self._on_delete_node)
         self.build_panel.pipe_deleted.connect(self._on_delete_pipe)
+        self.build_panel.node_updated.connect(self._on_update_node)
+        self.build_panel.pipe_updated.connect(self._on_update_pipe)
         self.build_panel.cleared.connect(self._on_clear_all)
 
         scroll_area = QScrollArea()
@@ -213,19 +215,35 @@ class MainWindow(QMainWindow):
         self.setWindowModified(False)
         self._update_window_title()
 
-    def _on_add_node(self, ntype: str):
+    def _on_add_node(self, ntype: str, params: Optional[dict] = None):
         try:
-            self.network.add_node(ntype)
+            kwargs = dict(params) if params else {}
+            self.network.add_node(ntype, **kwargs)
             self._mark_edited()
         except Exception as e:
             self._handle_error("Failed to add node", e)
 
-    def _on_add_pipe(self, start: str, end: str, has_pump: bool, power: float):
+    def _on_add_pipe(self, start: str, end: str, has_pump: bool, power: float, params: Optional[dict] = None):
         try:
-            self.network.add_pipe(start, end, has_pump=has_pump, pump_power=power)
+            kwargs = dict(params) if params else {}
+            self.network.add_pipe(start, end, has_pump=has_pump, pump_power=power, **kwargs)
             self._mark_edited()
         except Exception as e:
             self._handle_error("Failed to add pipe", e)
+
+    def _on_update_node(self, node_id: str, fields: dict):
+        try:
+            self.network.update_node(node_id, **fields)
+            self._mark_edited()
+        except Exception as e:
+            self._handle_error("Failed to update node", e)
+
+    def _on_update_pipe(self, pipe_id: str, fields: dict):
+        try:
+            self.network.update_pipe(pipe_id, **fields)
+            self._mark_edited()
+        except Exception as e:
+            self._handle_error("Failed to update pipe", e)
 
     def _on_delete_node(self, node_id: str):
         try:

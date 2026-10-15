@@ -169,3 +169,13 @@ after `from_dict` round-trips.
 - **Roughness Interpretation**: Pipe roughness specifies absolute equivalent sand roughness ($\varepsilon$, in metres) for Darcy-Weisbach calculations, not dimensionless coefficients.
 - **Backward Compatibility and Schema Evolution**: Format version 2 extends `.wnet` to persist physical parameters while preserving full backward compatibility with version 1 files. Unknown keys in node, pipe, or top-level objects are ignored during deserialization to maintain forward resilience.
 
+---
+
+## 11. UI Physical Parameter Entry and Properties Editor
+
+- **Empty Field = Not Set (`None`)**: In the Add Node/Pipe forms and the Properties editor, an empty text field denotes an unset parameter (`None`). Clearing a value and pressing Apply unsets the parameter in the model.
+- **Pump Toggle Not Editable After Creation**: A pipe cannot be switched between pumped and non-pumped in the Properties editor. The `has_pump` flag is fixed upon creation; if `has_pump` is true, its power rating can be adjusted in the Properties editor.
+- **Tank Capacity Stored Only**: Tank `capacity` is editable in the Properties editor with a tooltip noting it is stored for reference and not yet incorporated into DAE matrix equations.
+- **Input Fields Retained on Add**: Values in the Add Node and Add Pipe forms remain populated after clicking "Add" so users can rapidly add multiple network elements with matching properties without retyping.
+
+
