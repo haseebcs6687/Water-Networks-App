@@ -5,6 +5,25 @@ All notable changes to the Water Network Modeler application will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Theorem 8 Switched DAE Solver (`core/dae_solver.py`)**:
+  - Pure NumPy implementation of Wong sequences and modified quasi-Weierstrass form (QWF) decomposition into differential and algebraic subspaces.
+  - Faithful SVD-based linear algebra helpers (`orthT`, `nullT`, `rnk`, `preimg`, `extendBasis`) with $10^{-10} \max(1, s_{\max})$ tolerance.
+  - Mode analysis with diagnostic reporting matching MATLAB reference (`|det(E-A)|`, `||M*Eimp||`, `||N1w||`, `||M*T2w||`, `||N2||`, `eig(J)`).
+  - Dirac impulse $\delta_{t_s}$ calculation for valve switching events via formula (10c) and independent cross-check against formula (6) of the paper ($x[t_s] = -E^{\text{imp}} x(t_s^-)$).
+  - Consistent rest state calculation ($v = 0$, zero flows) for initial scenario state without artificial jumps or impulses.
+  - Pure NumPy adaptive Dormand-Prince 5(4) integrator (`ode45` equivalent) with $rtol = 10^{-10}$, $atol = 10^{-12}$, maximum step $(t_1 - t_0)/200$, and dense Hermite interpolation on a uniform sampling grid (default 40 pts/s).
+  - Simulation result object (`SimulationResult`) with series extractors, head converters, and switch-time duplicate sample recording ($t_s^-$ and $t_s^+$) for jump visualization.
+- **Pipe Friction Formulations (`core/physics.py`)**:
+  - `PhysicsSettings.friction_mode`: supports `"constant"` (default, $f = 0.02$), `"swamee_jain"`, and `"darcy_weisbach"`.
+  - Swamee-Jain explicit turbulent approximation across all flow rates.
+  - Darcy-Weisbach formulation following the EPANET 2.2 engine rule: Hagen-Poiseuille laminar flow ($64/\text{Re}$ with singularity-free linear term at $Q = 0$), Dunlop cubic interpolation in the transition zone ($2000 < \text{Re} < 4000$), and Swamee-Jain in the turbulent zone ($\text{Re} \ge 4000$).
+  - Steady-state Newton-Raphson solver generalized to support nonlinear friction laws using numerical finite-difference Jacobian.
+
+---
+
 ## [1.1.0] - 2026-10-17
 
 ### Added

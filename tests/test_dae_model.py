@@ -315,6 +315,14 @@ def test_check_supported_reasons():
         build_switched_dae(net_missing)
 
 
-def test_darcy_weisbach_raises_not_implemented():
-    with pytest.raises(NotImplementedError, match="Darcy-Weisbach friction mode is not yet implemented"):
-        PhysicsSettings(friction_mode="darcy_weisbach")
+def test_friction_modes_supported():
+    """Verify PhysicsSettings supports 'constant', 'swamee_jain', and 'darcy_weisbach'."""
+    s_c = PhysicsSettings(friction_mode="constant")
+    assert s_c.friction_mode == "constant"
+    s_sj = PhysicsSettings(friction_mode="swamee_jain")
+    assert s_sj.friction_mode == "swamee_jain"
+    s_dw = PhysicsSettings(friction_mode="darcy_weisbach")
+    assert s_dw.friction_mode == "darcy_weisbach"
+
+    with pytest.raises(ValueError, match="Unknown friction_mode"):
+        PhysicsSettings(friction_mode="unknown_mode")

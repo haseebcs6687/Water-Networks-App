@@ -229,8 +229,61 @@ These decisions were made while implementing the v2.0 switched-DAE comparison fe
 - **No new dependencies**: The DAE solver, scenario engine, and matrix builder use only `numpy`. No `scipy`, `sympy`, or other third-party libraries are added in v2.0.
 - **Default elevation is None (unset)**: Starting from v1.1.0, `add_node` without an explicit `elevation` argument produces `elevation=None` (not `50.0`). Old `.wnet` v1 files that contain `"elevation": 50.0` still load `50.0` correctly. This is a deliberate break from the v1.0.0 default.
 - **Physical parameters stored, not yet used**: All physical parameters (elevation, head, length, diameter, roughness) are stored in `.wnet` files and editable in the UI, but the current symbolic matrix builder (`build_matrices`) ignores them. The planned v2.0 numeric DAE builder will use them. All documentation (README, CHANGELOG, ASSUMPTIONS, in-app text) explicitly says "stored for the planned comparison with EPANET".
-- **PhysicsSettings dataclass**: `PhysicsSettings` lives in `core/physics.py` and carries `g`, `nu`, `friction_mode`, and `friction_factor`. `"darcy_weisbach"` mode raises `NotImplementedError` until the iteration is implemented. Default mode is `"constant"` with `friction_factor = 0.02`.
+- **PhysicsSettings dataclass**: `PhysicsSettings` lives in `core/physics.py` and carries `g`, `nu`, `friction_mode`, and `friction_factor`. Default mode is `"constant"` with `friction_factor = 0.02`.
 - **Scenario and valve timing**: `Scenario` stores a list of `(switch_time, mode)` pairs. The initial mode is the mode at time 0. The client has not confirmed whether valve times are entered by the user or fixed; for the specimen they are hardcoded in `Scenario.matlab_specimen(k)`.
+
+---
+
+## 16. Friction law (default constant f = 0.02 as in the MATLAB file; Swamee-Jain/Darcy-Weisbach optional)
+
+**Decision**: `PhysicsSettings.friction_mode` supports `"constant"`, `"swamee_jain"`, and `"darcy_weisbach"`.
+
+1. **Constant friction factor** (default):
+   - $f = \text{friction\_factor} = 0.02$.
+   - Quadratic head loss term: $\bar{g}_i(Q) = -\frac{f}{2 D_i \text{Area}_i} Q |Q|$.
+
+2. **Swamee-Jain**:
+   - Turbulent formulation evaluated at every flow:
+     $$f(Q) = \frac{0.25}{\left[ \log_{10}\left( \frac{\varepsilon}{3.7 D} + \frac{5.74}{\text{Re}^{0.9}} \right) \right]^2}, \quad \text{Re} = \frac{4 |Q|}{\pi D \nu}$$
+   - At $Q = 0$, $\bar{g}_i(0) = 0.0$ continuously without division by zero.
+
+3. **Darcy-Weisbach (EPANET rule)**:
+   - Implemented from EPANET 2.2 source code (`hydcoeffs.c` lines 622–670):
+     - Laminar ($\text{Re} \le 2000$): $f = 64 / \text{Re}$.
+       The friction term is implemented directly as $\bar{g}_i(Q) = -\frac{32 \nu}{D_i^2} Q$, which is strictly linear in $Q$ and avoids $0/0$ indeterminacy at $Q = 0$.
+     - Transition ($2000 < \text{Re} < 4000$): Dunlop cubic interpolation:
+       $w = \frac{|Q|}{\nu D} = \frac{\text{Re} \pi}{4}$, $r = \frac{w}{500 \pi} = \frac{\text{Re}}{2000} \in (1, 2)$
+       $y_2 = \frac{\varepsilon}{3.7 D} + \text{AB}$, where $\text{AB} = \frac{5.74}{4000^{0.9}}$
+       $y_3 = A_9 \ln(y_2) = -2 \log_{10}(y_2)$
+       $f_a = \frac{1}{y_3^2}$, $f_b = \left(2.0 + \frac{\text{AC}}{y_2 y_3}\right) f_a$ with $\text{AC} = \left(-\frac{3.6}{\ln 10}\right) \text{AB}$
+       $x_1 = 7 f_a - f_b$
+       $x_2 = 0.128 - 17 f_a + 2.5 f_b$
+       $x_3 = -0.128 + 13 f_a - 2 f_b$
+       $x_4 = 0.032 - 3 f_a + 0.5 f_b$
+       $f = x_1 + r (x_2 + r (x_3 + r x_4))$.
+     - Turbulent ($\text{Re} \ge 4000$): Swamee-Jain formula above.
+   - Status: VERIFIED against EPANET 2.2 source code (`hydcoeffs.c`).
+
+---
+
+## 17. Initial state is the rest state (zero flow) of the first valve mode
+
+**Decision**: The initial state $x(0)$ is the stationary rest state of the first operating mode of the scenario.
+
+- In the MATLAB reference (`restState`), the physical water system is initially at rest on $(-\infty, 0)$ with zero flows ($v = 0$).
+- The algebraic components follow directly from equations (10b) and (10c):
+  $$w_1 = -f_{1w}, \quad \xi = M(T_{1w} w_1), \quad w_2 = -(f_{2w} + N_{2w} \bar{g}(\xi)), \quad x_0 = T_{1w} w_1 + T_{2w} w_2$$
+- Consequently, $x(0)$ satisfies all algebraic constraints of the initial mode; there is no algebraic jump and no Dirac impulse at $t = 0$.
+
+---
+
+## 18. Impulses are reported, not plotted as bars; the plot shows an arrow (not confirmed by client)
+
+**Decision**: Dirac impulses $\delta_{t_s}$ resulting from instantaneous valve closures are recorded as analytical impulse coefficients in `ImpulseRecord` with cross-check validation against formula (6) of the paper ($x[t_s] = -E^{\text{imp}} x(t_s^-)$).
+
+- In data arrays, samples at $t_s^-$ and $t_s^+$ record the algebraic states immediately before and after the switch.
+- In UI visualizations (and the MATLAB comparison script), Dirac impulses are depicted as vertical arrows scaled by impulse magnitude rather than finite bars, reflecting their distribution-theoretic nature. This visual convention is not yet confirmed by the client.
+
 
 
 

@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Tuple, Any, Union
 import numpy as np
 
 from core.models import Network, Node, Pipe
-from core.physics import PhysicsSettings
+from core.physics import PhysicsSettings, pipe_friction_term
 from core.params import missing_parameters
 from core.checks import validate_network
 from core.scenario import ValveId, Scenario, Mode
@@ -180,8 +180,14 @@ class SwitchedDAE:
         """Elevation for each state in metres (NaN for pipe flow states)."""
         return self._elevation.copy()
 
-    def _get_valve_switch(self, mode: Optional[Union[Dict[Any, int], Mode]], pipe_id: str, end: str) -> int:
+    def _get_valve_switch(self, mode: Optional[Union[Dict[Any, int], Mode, Tuple[int, ...], List[int]]], pipe_id: str, end: str) -> int:
         if mode is None:
+            return 1
+        if isinstance(mode, (tuple, list)):
+            if len(mode) == len(self.valves):
+                vid = ValveId(pipe_id, end)
+                if vid in self.valves:
+                    return int(mode[self.valves.index(vid)])
             return 1
         if isinstance(mode, Mode):
             state_dict = mode.state
@@ -191,14 +197,15 @@ class SwitchedDAE:
             state_dict = mode
 
         vid = ValveId(pipe_id, end)
-        if vid in state_dict:
-            return int(state_dict[vid])
-        s_key = f"{pipe_id}:{end}"
-        if s_key in state_dict:
-            return int(state_dict[s_key])
-        t_key = (pipe_id, end)
-        if t_key in state_dict:
-            return int(state_dict[t_key])
+        if isinstance(state_dict, dict):
+            if vid in state_dict:
+                return int(state_dict[vid])
+            s_key = f"{pipe_id}:{end}"
+            if s_key in state_dict:
+                return int(state_dict[s_key])
+            t_key = (pipe_id, end)
+            if t_key in state_dict:
+                return int(state_dict[t_key])
         return 1
 
     def matrices(self, mode: Optional[Union[Dict[Any, int], Mode]] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -275,12 +282,11 @@ class SwitchedDAE:
     def friction(self, Q: np.ndarray) -> np.ndarray:
         """Compute Darcy friction vector gbar(Q) for pipe flows Q."""
         gbar = np.zeros(self.N_p, dtype=float)
-        ff = self.settings.friction_factor
         for i, pipe in enumerate(self.pipes):
-            Area = math.pi * (pipe.diameter ** 2) / 4.0
-            coeff = -(ff / (2.0 * pipe.diameter * Area))
+            d = float(pipe.diameter)
+            eps = float(pipe.roughness if pipe.roughness is not None else 0.0)
             q = float(Q[i])
-            gbar[i] = coeff * q * abs(q)
+            gbar[i] = pipe_friction_term(d, eps, q, self.settings)
         return gbar
 
     def is_regular(self, mode: Optional[Union[Dict[Any, int], Mode]] = None) -> bool:
@@ -410,14 +416,18 @@ def steady_state(model: SwitchedDAE, mode: Optional[Union[Dict[Any, int], Mode]]
         if float(np.max(np.abs(res))) < tol:
             return x
 
-        # Build Jacobian J = A + N * diag(-2 * k_i * |Q_i|) * M
+        # Build Jacobian J = A + N * d(gbar)/dQ * M via numerical finite difference
+        h = 1e-7
         J = A.copy()
-        ff = model.settings.friction_factor
-        for i, pipe in enumerate(model.pipes):
-            Area = math.pi * (pipe.diameter ** 2) / 4.0
-            k_f = ff / (2.0 * pipe.diameter * Area)
-            q_abs = max(abs(xi[i]), 1e-12)
-            J[i, i] += -2.0 * k_f * q_abs
+        for i in range(N_p):
+            xi_plus = xi.copy()
+            xi_minus = xi.copy()
+            xi_plus[i] += h
+            xi_minus[i] -= h
+            g_plus = model.friction(xi_plus)[i]
+            g_minus = model.friction(xi_minus)[i]
+            dg_dQ = (g_plus - g_minus) / (2.0 * h)
+            J[i, i] += dg_dQ
 
         try:
             dx = np.linalg.solve(J, -res)
