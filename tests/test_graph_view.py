@@ -200,3 +200,92 @@ def test_zoom_level_survives_refresh_after_edit(qapp):
 
     window.setWindowModified(False)
     window.close()
+
+
+def test_fit_on_first_draw_and_deferred_tab_switch(qapp):
+    window = MainWindow()
+    window.resize(1280, 800)
+    # Start on Matrices tab (index 1) so GraphView is hidden
+    window.right_tabs.setCurrentIndex(1)
+    window.show()
+    qapp.processEvents()
+
+    # Load example paper network while Matrices tab is active
+    window._on_load_example(example_paper_network)
+    assert window.graph_view._pending_fit is True
+
+    # Switch to Network tab (index 0)
+    window.right_tabs.setCurrentIndex(0)
+    qapp.processEvents()
+
+    # showEvent/resizeEvent should have applied fit and cleared _pending_fit
+    assert window.graph_view._pending_fit is False
+
+    # Check all nodes are inside viewport rect
+    vp_rect = window.graph_view.view.viewport().rect()
+    for item in window.graph_view.scene.items():
+        if isinstance(item, NodeItem):
+            vp_poly = window.graph_view.view.mapFromScene(item.sceneBoundingRect())
+            r = vp_poly.boundingRect()
+            assert r.left() >= 0
+            assert r.right() <= vp_rect.width()
+            assert r.top() >= 0
+            assert r.bottom() <= vp_rect.height()
+
+    # Record scale
+    scale_before = window.graph_view.view.transform().m11()
+
+    # Window resize: zoom should NOT be reset
+    window.resize(1400, 900)
+    qapp.processEvents()
+    scale_after_resize = window.graph_view.view.transform().m11()
+    assert pytest.approx(scale_after_resize, rel=1e-3) == scale_before
+
+    # Clicking Fit should refit
+    window.graph_view.fit_btn.click()
+    scale_after_fit = window.graph_view.view.transform().m11()
+    assert scale_after_fit != scale_after_resize
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_cropped_image_export_and_legend_non_overlap(qapp, tmp_path):
+    view = GraphView()
+    net = example_paper_network()
+    view.draw_network(net)
+
+    # 1. Render to image
+    img = view.render_to_image(scale=2.0, margin=24.0)
+    assert not img.isNull()
+    w, h = img.width(), img.height()
+
+    # 2. Check pixel size is cropped (~1240 x 1264 rather than fixed 1200x900)
+    assert 1000 <= w <= 1600
+    assert 1000 <= h <= 1600
+
+    # 3. Non-white pixel fraction
+    non_white = 0
+    step = 4
+    for y in range(0, h, step):
+        for x in range(0, w, step):
+            c = img.pixelColor(x, y)
+            if c.red() < 250 or c.green() < 250 or c.blue() < 250:
+                non_white += 1
+    sampled_total = ((w + step - 1) // step) * ((h + step - 1) // step)
+    fraction = non_white / sampled_total
+    assert fraction > 0.02
+
+    # 4. Legend present and does not overlap any node
+    legend_rect = view.legend_item.sceneBoundingRect()
+    node_items = [it for it in view.scene.items() if isinstance(it, NodeItem)]
+    assert len(node_items) == 6
+    for node in node_items:
+        node_rect = node.sceneBoundingRect()
+        assert not legend_rect.intersects(node_rect)
+
+    # 5. export_image file saving
+    out_file = tmp_path / "test_export.png"
+    ok = view.export_image(out_file)
+    assert ok is True
+    assert out_file.exists() and out_file.stat().st_size > 0

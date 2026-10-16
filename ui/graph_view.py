@@ -323,8 +323,13 @@ class NetworkGraphicsView(QGraphicsView):
         except Exception:
             pass
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._graph_view._apply_fit_if_pending()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._graph_view._apply_fit_if_pending()
         try:
             self._graph_view.update_legend_position()
         except Exception:
@@ -344,9 +349,27 @@ class GraphView(QWidget):
         self._pos: Dict[str, Tuple[float, float]] = {}
         self._highlight_ids: Set[str] = set()
         self._current_network = None
-        self._needs_fit = True
+        self._last_drawn_node_count = 0
+        self._pending_fit = True
 
         self._init_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_fit_if_pending()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_fit_if_pending()
+
+    def _is_viewport_valid(self) -> bool:
+        vp = self.view.viewport()
+        return self.isVisible() and vp.width() > 50 and vp.height() > 50
+
+    def _apply_fit_if_pending(self):
+        if self._pending_fit and self._is_viewport_valid():
+            self.fit_in_view()
+            self._pending_fit = False
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -399,7 +422,7 @@ class GraphView(QWidget):
 
     def _on_relayout(self):
         self._pos.clear()
-        self._needs_fit = True
+        self._pending_fit = True
         if self._current_network:
             self.draw_network(self._current_network)
 
@@ -417,8 +440,8 @@ class GraphView(QWidget):
     def set_positions(self, pos: Dict[str, Tuple[float, float]]) -> None:
         """Set canvas node positions in model space and refresh drawing."""
         self._pos = dict(pos) if pos else {}
-        self._needs_fit = True
-        if self._current_network:
+        self._pending_fit = True
+        if pos and self._current_network:
             self.draw_network(self._current_network)
 
     def highlight(self, ids: List[str]) -> None:
@@ -448,13 +471,15 @@ class GraphView(QWidget):
             if hasattr(self, "legend_item") and self.legend_item:
                 self.legend_item.setVisible(True)
                 vw = self.view.viewport().width()
+                if vw <= 50:
+                    return
                 target_scene_pt = self.view.mapToScene(max(10, vw - 135), 15)
                 self.legend_item.setPos(target_scene_pt)
         except (RuntimeError, AttributeError):
             pass
 
-    def fit_in_view(self):
-        """Fit all graph elements nicely in the viewport."""
+    def fit_in_view(self, margin: float = 40.0):
+        """Fit all graph elements nicely in the viewport with margin."""
         items = [it for it in self.scene.items() if isinstance(it, (NodeItem, PipeItem))]
         if not items:
             return
@@ -462,49 +487,99 @@ class GraphView(QWidget):
         for it in items[1:]:
             rect = rect.united(it.sceneBoundingRect())
         if not rect.isEmpty():
-            self.view.fitInView(rect.adjusted(-50, -50, 50, 50), Qt.KeepAspectRatio)
+            self.view.fitInView(rect.adjusted(-margin, -margin, margin, margin), Qt.AspectRatioMode.KeepAspectRatio)
             self.update_legend_position()
 
-    def export_image(self, file_path: str | Path, width: int = 1200, height: int = 900) -> bool:
-        """Render the network graph to a PNG image with a white background."""
-        file_path = Path(file_path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+    def render_to_image(self, scale: float = 2.0, margin: float = 24.0) -> QImage:
+        """Render the network graph cropped to content plus margin on a white background."""
+        nodes = [it for it in self.scene.items() if isinstance(it, NodeItem)]
+        pipes = [it for it in self.scene.items() if isinstance(it, PipeItem)]
+        graph_items = nodes + pipes
 
-        image = QImage(width, height, QImage.Format_ARGB32)
+        if not graph_items:
+            rect = self.hint_item.sceneBoundingRect() if self.hint_item else QRectF(-150, -50, 300, 100)
+            export_rect = rect.adjusted(-margin, -margin, margin, margin)
+            w = max(100, int(round(export_rect.width() * scale)))
+            h = max(60, int(round(export_rect.height() * scale)))
+            image = QImage(w, h, QImage.Format_ARGB32)
+            image.fill(QColor("white"))
+            painter = QPainter(image)
+            painter.setRenderHints(
+                QPainter.Antialiasing | QPainter.TextAntialiasing | QPainter.SmoothPixmapTransform
+            )
+            self.scene.render(painter, target=QRectF(0, 0, w, h), source=export_rect)
+            painter.end()
+            return image
+
+        graph_rect = graph_items[0].sceneBoundingRect()
+        for it in graph_items[1:]:
+            graph_rect = graph_rect.united(it.sceneBoundingRect())
+
+        # Determine legend placement inside the exported image without covering nodes
+        lw = self.legend_item.boundingRect().width()
+        lh = self.legend_item.boundingRect().height()
+
+        # Try placing legend at top-right corner of graph rect
+        lx = graph_rect.right() - lw
+        ly = graph_rect.top()
+        legend_rect = QRectF(lx, ly, lw, lh)
+
+        # Check if this overlaps any node
+        overlaps_node = any(legend_rect.intersects(n.sceneBoundingRect()) for n in nodes)
+        if overlaps_node:
+            lx = graph_rect.right() + 10.0
+            ly = graph_rect.top()
+            legend_rect = QRectF(lx, ly, lw, lh)
+
+        self._last_export_legend_rect = legend_rect
+        self.legend_item.setVisible(True)
+        self.legend_item.setPos(lx, ly)
+
+        total_content_rect = graph_rect.united(legend_rect)
+        export_rect = total_content_rect.adjusted(-margin, -margin, margin, margin)
+
+        w = int(round(export_rect.width() * scale))
+        h = int(round(export_rect.height() * scale))
+
+        image = QImage(w, h, QImage.Format_ARGB32)
         image.fill(QColor("white"))
 
         painter = QPainter(image)
         painter.setRenderHints(
             QPainter.Antialiasing | QPainter.TextAntialiasing | QPainter.SmoothPixmapTransform
         )
-
-        nodes_and_pipes = [it for it in self.scene.items() if isinstance(it, (NodeItem, PipeItem))]
-        if nodes_and_pipes:
-            rect = nodes_and_pipes[0].sceneBoundingRect()
-            for it in nodes_and_pipes[1:]:
-                rect = rect.united(it.sceneBoundingRect())
-
-            # Position legend in the top-right corner of the scene for export
-            self.legend_item.setVisible(True)
-            self.legend_item.setPos(rect.right() + 20, rect.top())
-            export_rect = rect.united(self.legend_item.sceneBoundingRect()).adjusted(-40, -40, 40, 40)
-        else:
-            export_rect = self.scene.sceneRect()
-            if export_rect.isEmpty():
-                export_rect = QRectF(-width / 2.0, -height / 2.0, width, height)
-
-        self.scene.render(painter, target=QRectF(0, 0, width, height), source=export_rect)
+        self.scene.render(painter, target=QRectF(0, 0, w, h), source=export_rect)
         painter.end()
 
+        # Restore legend position for view
         self.update_legend_position()
+        return image
+
+    def export_image(self, file_path: str | Path, *args, scale: float = 2.0, margin: float = 24.0, **kwargs) -> bool:
+        """Export the cropped network graph to a PNG image."""
+        file_path = Path(file_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        image = self.render_to_image(scale=scale, margin=margin)
         return image.save(str(file_path), "PNG")
+
+    save_image = export_image
 
     def draw_network(self, network):
         """Draw the given Network instance on the QGraphicsScene."""
+        is_first_draw = (
+            self._current_network is None
+            or self._current_network is not network
+            or self._last_drawn_node_count == 0
+        )
+        if is_first_draw:
+            self._pending_fit = True
+
         self._current_network = network
+        self._last_drawn_node_count = len(network.nodes)
 
         if not network.nodes:
             self._show_empty_hint()
+            self._pending_fit = True
             return
 
         self.scene.clear()
@@ -589,11 +664,19 @@ class GraphView(QWidget):
         self.scene.addItem(self.legend_item)
         self.legend_item.setVisible(True)
 
-        if self._needs_fit:
+        if self._pending_fit and self._is_viewport_valid():
             self.fit_in_view()
-            self._needs_fit = False
+            self._pending_fit = False
         else:
             self.update_legend_position()
+
+    @property
+    def _needs_fit(self) -> bool:
+        return self._pending_fit
+
+    @_needs_fit.setter
+    def _needs_fit(self, val: bool):
+        self._pending_fit = val
 
     # ------------------------------------------------------------------
     # Backward compatibility shim for tests
