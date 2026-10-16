@@ -178,4 +178,14 @@ after `from_dict` round-trips.
 - **Tank Capacity Stored Only**: Tank `capacity` is editable in the Properties editor with a tooltip noting it is stored for reference and not yet incorporated into DAE matrix equations.
 - **Input Fields Retained on Add**: Values in the Add Node and Add Pipe forms remain populated after clicking "Add" so users can rapidly add multiple network elements with matching properties without retyping.
 
+---
+
+## 12. Qt GraphicsScene Graph View
+
+- **Native Qt Graphics Architecture**: Replaced Matplotlib canvas with native `QGraphicsScene` / `QGraphicsView` for network rendering, eliminating Matplotlib redraw latency, layout resets, and thread/context switching overhead while preserving Matplotlib in the project dependencies for other potential consumers.
+- **Coordinate System Mapping**: Network models use Cartesian coordinates in `[-1.0, 1.0]` with $+Y$ pointing upward. The Qt scene uses computer graphics convention where $+Y$ points downward. Conversion is defined by $x_{scene} = x_{model} \times \text{SCALE}$ and $y_{scene} = -y_{model} \times \text{SCALE}$, with fixed $\text{SCALE} = 300.0$.
+- **Edge Geometry & Curvature Separation**: Pipes stop cleanly at the node circular boundary rather than intersecting node centers. Parallel edges between identical endpoints are separated via quadratic Bezier curves with opposing lateral curvature offsets ($\pm 0.25$) to prevent visual overlap.
+- **Fixed-Size Legend & Overlay Elements**: Node type legend is implemented with `QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations` and pinned to the viewport top-right so it remains readable and stationary under zoom and pan operations.
+- **Zoom & Pan Stability**: Viewport transformations persist across property edits and network refreshes; automatic recentering is triggered only on project load or explicit user click on the "Fit" button.
+
 

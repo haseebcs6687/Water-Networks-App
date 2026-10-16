@@ -1,105 +1,518 @@
-﻿"""Widget for rendering directed water networks using matplotlib and NetworkX."""
+"""Widget for rendering directed water networks using Qt QGraphicsScene and QGraphicsView."""
 
+import math
 from collections import defaultdict
+from pathlib import Path
 from typing import Dict, Tuple, List, Set, Optional
 
 import networkx as nx
-import matplotlib
-matplotlib.use("QtAgg")
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from matplotlib.figure import Figure
-from matplotlib.lines import Line2D
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
+from PySide6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtGui import (
+    QColor, QPen, QBrush, QFont, QFontMetrics, QPainter,
+    QPainterPath, QPolygonF, QImage
+)
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QGraphicsView,
+    QGraphicsScene, QGraphicsItem, QGraphicsSimpleTextItem, QFileDialog
+)
+
+# ---------------------------------------------------------------------------
+# Coordinate Conversion Constants & Helpers
+# ---------------------------------------------------------------------------
+
+SCALE: float = 300.0
+NODE_RADIUS: float = 20.0
+
+
+def model_to_scene(x: float, y: float, scale: float = SCALE) -> Tuple[float, float]:
+    """Convert model/layout coordinate (y up) to Qt scene coordinate (y down)."""
+    return (float(x) * scale, -float(y) * scale)
+
+
+def scene_to_model(sx: float, sy: float, scale: float = SCALE) -> Tuple[float, float]:
+    """Convert Qt scene coordinate (y down) to model/layout coordinate (y up)."""
+    return (float(sx) / scale, -float(sy) / scale)
+
+
+# ---------------------------------------------------------------------------
+# Graphics Items
+# ---------------------------------------------------------------------------
+
+
+class NodeItem(QGraphicsItem):
+    """Circular node item with centered ID label."""
+
+    def __init__(self, node_id: str, node_type: str, pos: QPointF, parent=None):
+        super().__init__(parent)
+        self.node_id = node_id
+        self.node_type = node_type.lower()
+        self.setPos(pos)
+        self.setZValue(10)
+        self._highlighted = False
+
+        self.color_map = {
+            "junction": QColor("#87CEEB"),
+            "tank": QColor("#FFD700"),
+            "reservoir": QColor("#FA8072"),
+        }
+        self.base_color = self.color_map.get(self.node_type, QColor("#CCCCCC"))
+
+    def set_highlighted(self, val: bool):
+        if self._highlighted != val:
+            self._highlighted = val
+            self.update()
+
+    def boundingRect(self) -> QRectF:
+        r = NODE_RADIUS + 4
+        return QRectF(-r, -r, 2 * r, 2 * r)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing)
+        if self._highlighted:
+            pen = QPen(QColor("red"), 3.0)
+        else:
+            pen = QPen(QColor("#000000"), 1.5)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(self.base_color))
+        painter.drawEllipse(QPointF(0, 0), NODE_RADIUS, NODE_RADIUS)
+
+        # Center node ID label
+        painter.setPen(QColor("#000000"))
+        font = QFont("Segoe UI", 9, QFont.Bold)
+        painter.setFont(font)
+        painter.drawText(
+            QRectF(-NODE_RADIUS, -NODE_RADIUS, 2 * NODE_RADIUS, 2 * NODE_RADIUS),
+            Qt.AlignCenter,
+            self.node_id
+        )
+
+
+class PipeItem(QGraphicsItem):
+    """Directed pipe item stopping at node boundaries with arrow and mid-curve label."""
+
+    def __init__(
+        self,
+        pipe_id: str,
+        start_pos: QPointF,
+        end_pos: QPointF,
+        has_pump: bool = False,
+        label_text: str = "",
+        curvature: float = 0.0,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.pipe_id = pipe_id
+        self.start_pos = start_pos
+        self.end_pos = end_pos
+        self.has_pump = has_pump
+        self.label_text = label_text or pipe_id
+        self.curvature = curvature
+        self.setZValue(5)
+        self._highlighted = False
+
+        self._build_geometry()
+
+    def _build_geometry(self):
+        p1 = self.start_pos
+        p2 = self.end_pos
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        length = math.hypot(dx, dy)
+        if length < 1e-4:
+            ux, uy = 1.0, 0.0
+            nx, ny = 0.0, 1.0
+        else:
+            ux, uy = dx / length, dy / length
+            nx, ny = -uy, ux
+
+        # Midpoint and control point for quadratic Bezier
+        mx = (p1.x() + p2.x()) / 2.0
+        my = (p1.y() + p2.y()) / 2.0
+
+        if abs(self.curvature) < 1e-4:
+            qx, qy = mx, my
+        else:
+            offset = self.curvature * length * 0.5
+            qx = mx + nx * offset
+            qy = my + ny * offset
+
+        # Start point at start node boundary
+        v1x, v1y = qx - p1.x(), qy - p1.y()
+        l1 = math.hypot(v1x, v1y)
+        if l1 > NODE_RADIUS:
+            start_pt = QPointF(p1.x() + (v1x / l1) * NODE_RADIUS, p1.y() + (v1y / l1) * NODE_RADIUS)
+        else:
+            start_pt = p1
+
+        # End point at end node boundary
+        v2x, v2y = p2.x() - qx, p2.y() - qy
+        l2 = math.hypot(v2x, v2y)
+        if l2 > NODE_RADIUS:
+            end_pt = QPointF(p2.x() - (v2x / l2) * NODE_RADIUS, p2.y() - (v2y / l2) * NODE_RADIUS)
+        else:
+            end_pt = p2
+
+        self.path = QPainterPath()
+        self.path.moveTo(start_pt)
+        ctrl_pt = QPointF(qx, qy)
+        if abs(self.curvature) < 1e-4:
+            self.path.lineTo(end_pt)
+        else:
+            self.path.quadTo(ctrl_pt, end_pt)
+
+        # Arrowhead at end_pt
+        tx = end_pt.x() - ctrl_pt.x()
+        ty = end_pt.y() - ctrl_pt.y()
+        tlen = math.hypot(tx, ty)
+        if tlen > 1e-4:
+            tux, tuy = tx / tlen, ty / tlen
+        else:
+            tux, tuy = ux, uy
+        tnx, tny = -tuy, tux
+
+        arrow_len = 13.0
+        arrow_half_width = 5.0
+        tip = end_pt
+        left_barb = QPointF(
+            tip.x() - tux * arrow_len + tnx * arrow_half_width,
+            tip.y() - tuy * arrow_len + tny * arrow_half_width
+        )
+        right_barb = QPointF(
+            tip.x() - tux * arrow_len - tnx * arrow_half_width,
+            tip.y() - tuy * arrow_len - tny * arrow_half_width
+        )
+        self.arrow_poly = QPolygonF([tip, left_barb, right_barb])
+
+        # Curve midpoint for label box
+        mid_t = 0.5
+        if abs(self.curvature) < 1e-4:
+            self.label_pos = QPointF((start_pt.x() + end_pt.x()) / 2.0, (start_pt.y() + end_pt.y()) / 2.0)
+        else:
+            mid_x = (1 - mid_t)**2 * start_pt.x() + 2 * (1 - mid_t) * mid_t * qx + mid_t**2 * end_pt.x()
+            mid_y = (1 - mid_t)**2 * start_pt.y() + 2 * (1 - mid_t) * mid_t * qy + mid_t**2 * end_pt.y()
+            self.label_pos = QPointF(mid_x, mid_y)
+
+    def set_highlighted(self, val: bool):
+        if self._highlighted != val:
+            self._highlighted = val
+            self.update()
+
+    def boundingRect(self) -> QRectF:
+        rect = self.path.boundingRect()
+        rect = rect.united(self.arrow_poly.boundingRect())
+        return rect.adjusted(-30, -30, 30, 30)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 1. Curve
+        if self._highlighted:
+            line_pen = QPen(QColor("red"), 3.5)
+            color = QColor("red")
+        else:
+            color = QColor("#DC143C") if self.has_pump else QColor("#333333")
+            style = Qt.DashLine if self.has_pump else Qt.SolidLine
+            line_pen = QPen(color, 2.0, style)
+
+        painter.setPen(line_pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(self.path)
+
+        # 2. Arrowhead
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(color))
+        painter.drawPolygon(self.arrow_poly)
+
+        # 3. Label with white rounded background
+        font = QFont("Segoe UI", 8)
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+        tw = fm.horizontalAdvance(self.label_text)
+        th = fm.height()
+
+        box = QRectF(
+            self.label_pos.x() - tw / 2.0 - 4,
+            self.label_pos.y() - th / 2.0 - 2,
+            tw + 8,
+            th + 4
+        )
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(255, 255, 255, 230)))
+        painter.drawRoundedRect(box, 3, 3)
+
+        painter.setPen(color)
+        painter.drawText(box, Qt.AlignCenter, self.label_text)
+
+
+class LegendItem(QGraphicsItem):
+    """Overlay legend drawn in top-right of view, ignoring transformations."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        self.setZValue(100)
+
+    def boundingRect(self) -> QRectF:
+        return QRectF(0, 0, 120, 130)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor("#CCCCCC"), 1))
+        painter.setBrush(QBrush(QColor(255, 255, 255, 230)))
+        painter.drawRoundedRect(0, 0, 120, 130, 4, 4)
+
+        font = QFont("Segoe UI", 8)
+        painter.setFont(font)
+
+        entries = [
+            ("Junction", QColor("#87CEEB"), "node"),
+            ("Tank", QColor("#FFD700"), "node"),
+            ("Reservoir", QColor("#FA8072"), "node"),
+            ("Pipe", QColor("#333333"), "pipe"),
+            ("Pump", QColor("#DC143C"), "pump"),
+        ]
+
+        y = 10
+        for label, color, kind in entries:
+            if kind == "node":
+                painter.setPen(QPen(QColor("#000000"), 1))
+                painter.setBrush(QBrush(color))
+                painter.drawEllipse(12, y + 2, 10, 10)
+            elif kind == "pipe":
+                painter.setPen(QPen(color, 2, Qt.SolidLine))
+                painter.drawLine(8, y + 7, 26, y + 7)
+            elif kind == "pump":
+                painter.setPen(QPen(color, 2, Qt.DashLine))
+                painter.drawLine(8, y + 7, 26, y + 7)
+
+            painter.setPen(QColor("#000000"))
+            painter.drawText(34, y + 12, label)
+            y += 24
+
+
+# ---------------------------------------------------------------------------
+# Custom View Widget
+# ---------------------------------------------------------------------------
+
+
+class NetworkGraphicsView(QGraphicsView):
+    """QGraphicsView with smooth wheel zoom around cursor and hand drag panning."""
+
+    def __init__(self, scene: QGraphicsScene, graph_view: "GraphView", parent=None):
+        super().__init__(scene, parent)
+        self._graph_view = graph_view
+        self.setRenderHints(
+            QPainter.Antialiasing | QPainter.TextAntialiasing | QPainter.SmoothPixmapTransform
+        )
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+    def wheelEvent(self, event):
+        factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
+        self.scale(factor, factor)
+        self._graph_view.update_legend_position()
+
+    def scrollContentsBy(self, dx: int, dy: int):
+        super().scrollContentsBy(dx, dy)
+        try:
+            self._graph_view.update_legend_position()
+        except Exception:
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            self._graph_view.update_legend_position()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Main GraphView Widget
+# ---------------------------------------------------------------------------
 
 
 class GraphView(QWidget):
-    """Widget displaying the directed network graph with zoom/pan, re-layout, and element highlighting."""
+    """Widget displaying the directed water network graph using QGraphicsScene/View."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pos: Dict[str, Tuple[float, float]] = {}
         self._highlight_ids: Set[str] = set()
         self._current_network = None
+        self._needs_fit = True
+
         self._init_ui()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.figure = Figure(figsize=(6, 5), dpi=100)
-        self.canvas = FigureCanvasQTAgg(self.figure)
-        self.ax = self.figure.add_subplot(111)
-
+        # Top Control Bar
         top_bar = QHBoxLayout()
-        self.toolbar = NavigationToolbar2QT(self.canvas, self)
-        top_bar.addWidget(self.toolbar)
-
         self.relayout_btn = QPushButton("Re-layout")
         self.relayout_btn.setToolTip("Recalculate layout for all nodes")
         self.relayout_btn.clicked.connect(self._on_relayout)
         top_bar.addWidget(self.relayout_btn)
 
+        self.fit_btn = QPushButton("Fit")
+        self.fit_btn.setToolTip("Fit all network elements in view")
+        self.fit_btn.clicked.connect(self.fit_in_view)
+        top_bar.addWidget(self.fit_btn)
+
+        self.save_img_btn = QPushButton("Save image...")
+        self.save_img_btn.setToolTip("Export current network drawing to PNG image")
+        self.save_img_btn.clicked.connect(self._on_save_image)
+        top_bar.addWidget(self.save_img_btn)
+
+        top_bar.addStretch()
         layout.addLayout(top_bar)
-        layout.addWidget(self.canvas)
 
-        self._clear_axes()
+        # Graphics Scene and View
+        self.scene = QGraphicsScene(self)
+        self.view = NetworkGraphicsView(self.scene, self, self)
+        layout.addWidget(self.view)
 
-    def _clear_axes(self):
-        self.ax.clear()
-        self.ax.set_title("Network Graph")
-        self.ax.text(0.5, 0.5, "Add nodes and pipes to view network graph",
-                     horizontalalignment='center', verticalalignment='center',
-                     transform=self.ax.transAxes, fontsize=12, color='gray')
-        self.ax.axis('off')
-        self.canvas.draw()
+        self.legend_item = LegendItem()
+        self.scene.addItem(self.legend_item)
+        self.legend_item.setVisible(False)
+
+        self.hint_item: Optional[QGraphicsSimpleTextItem] = None
+        self._show_empty_hint()
+
+    def _show_empty_hint(self):
+        self.scene.clear()
+        self.hint_item = QGraphicsSimpleTextItem("Add nodes and pipes to view network graph")
+        self.hint_item.setFont(QFont("Segoe UI", 12))
+        self.hint_item.setBrush(QBrush(QColor("#888888")))
+        br = self.hint_item.boundingRect()
+        self.hint_item.setPos(-br.width() / 2.0, -br.height() / 2.0)
+        self.scene.addItem(self.hint_item)
+
+        self.legend_item = LegendItem()
+        self.scene.addItem(self.legend_item)
+        self.legend_item.setVisible(False)
 
     def _on_relayout(self):
         self._pos.clear()
+        self._needs_fit = True
         if self._current_network:
             self.draw_network(self._current_network)
 
+    def _on_save_image(self):
+        path_str, _ = QFileDialog.getSaveFileName(
+            self, "Save Network Image", "network.png", "PNG Images (*.png)"
+        )
+        if path_str:
+            self.export_image(path_str)
+
     def get_positions(self) -> Dict[str, Tuple[float, float]]:
-        """Return current canvas node positions."""
+        """Return current canvas node positions in model space [-1, 1]."""
         return dict(self._pos)
 
     def set_positions(self, pos: Dict[str, Tuple[float, float]]) -> None:
-        """Set canvas node positions and refresh drawing."""
+        """Set canvas node positions in model space and refresh drawing."""
         self._pos = dict(pos) if pos else {}
+        self._needs_fit = True
         if self._current_network:
             self.draw_network(self._current_network)
 
     def highlight(self, ids: List[str]) -> None:
-        """Highlight specified node/pipe IDs with a red outline."""
+        """Highlight specified node/pipe IDs with a red outline / thick red line."""
         self._highlight_ids = set(ids)
-        if self._current_network:
-            self.draw_network(self._current_network)
+        for item in self.scene.items():
+            if isinstance(item, NodeItem):
+                item.set_highlighted(item.node_id in self._highlight_ids)
+            elif isinstance(item, PipeItem):
+                item.set_highlighted(item.pipe_id in self._highlight_ids)
 
     def clear_highlight(self) -> None:
         """Clear all active graph highlights."""
         if self._highlight_ids:
             self._highlight_ids.clear()
-            if self._current_network:
-                self.draw_network(self._current_network)
+            for item in self.scene.items():
+                if isinstance(item, (NodeItem, PipeItem)):
+                    item.set_highlighted(False)
+
+    def update_legend_position(self):
+        """Keep legend pinned to the top-right corner of the view without zooming."""
+        try:
+            if not self._current_network or not self._current_network.nodes:
+                if hasattr(self, "legend_item") and self.legend_item:
+                    self.legend_item.setVisible(False)
+                return
+            if hasattr(self, "legend_item") and self.legend_item:
+                self.legend_item.setVisible(True)
+                vw = self.view.viewport().width()
+                target_scene_pt = self.view.mapToScene(max(10, vw - 135), 15)
+                self.legend_item.setPos(target_scene_pt)
+        except (RuntimeError, AttributeError):
+            pass
+
+    def fit_in_view(self):
+        """Fit all graph elements nicely in the viewport."""
+        items = [it for it in self.scene.items() if isinstance(it, (NodeItem, PipeItem))]
+        if not items:
+            return
+        rect = items[0].sceneBoundingRect()
+        for it in items[1:]:
+            rect = rect.united(it.sceneBoundingRect())
+        if not rect.isEmpty():
+            self.view.fitInView(rect.adjusted(-50, -50, 50, 50), Qt.KeepAspectRatio)
+            self.update_legend_position()
+
+    def export_image(self, file_path: str | Path, width: int = 1200, height: int = 900) -> bool:
+        """Render the network graph to a PNG image with a white background."""
+        file_path = Path(file_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        image = QImage(width, height, QImage.Format_ARGB32)
+        image.fill(QColor("white"))
+
+        painter = QPainter(image)
+        painter.setRenderHints(
+            QPainter.Antialiasing | QPainter.TextAntialiasing | QPainter.SmoothPixmapTransform
+        )
+
+        nodes_and_pipes = [it for it in self.scene.items() if isinstance(it, (NodeItem, PipeItem))]
+        if nodes_and_pipes:
+            rect = nodes_and_pipes[0].sceneBoundingRect()
+            for it in nodes_and_pipes[1:]:
+                rect = rect.united(it.sceneBoundingRect())
+
+            # Position legend in the top-right corner of the scene for export
+            self.legend_item.setVisible(True)
+            self.legend_item.setPos(rect.right() + 20, rect.top())
+            export_rect = rect.united(self.legend_item.sceneBoundingRect()).adjusted(-40, -40, 40, 40)
+        else:
+            export_rect = self.scene.sceneRect()
+            if export_rect.isEmpty():
+                export_rect = QRectF(-width / 2.0, -height / 2.0, width, height)
+
+        self.scene.render(painter, target=QRectF(0, 0, width, height), source=export_rect)
+        painter.end()
+
+        self.update_legend_position()
+        return image.save(str(file_path), "PNG")
 
     def draw_network(self, network):
-        """Draw the given Network instance on the canvas."""
+        """Draw the given Network instance on the QGraphicsScene."""
         self._current_network = network
-        self.ax.clear()
 
-        # Requirement 0a: Draw nodes as long as at least 1 node exists (even 0 pipes)
         if not network.nodes:
-            self._clear_axes()
+            self._show_empty_hint()
             return
 
-        G = nx.MultiDiGraph()
-        node_colors = {}
-        color_map = {"junction": "#87CEEB", "tank": "#FFD700", "reservoir": "#FA8072"}
+        self.scene.clear()
 
+        # Build NetworkX MultiDiGraph for layout
+        G = nx.MultiDiGraph()
         for n in network.nodes:
             G.add_node(n.id, type=n.type)
-            node_colors[n.id] = color_map.get(n.type, "#CCCCCC")
-
         for p in network.pipes:
             label = f"{p.id} ({p.pump_power:.0f}kW)" if p.has_pump else p.id
             G.add_edge(p.start, p.end, id=p.id, has_pump=p.has_pump, power=p.pump_power, label=label)
@@ -124,24 +537,13 @@ class GraphView(QWidget):
                 new_pos = nx.spring_layout(G, pos=pos_init, fixed=fixed_nodes, seed=42)
                 self._pos.update(new_pos)
 
-        pos = self._pos
+        # Map to scene coordinates
+        scene_node_positions: Dict[str, QPointF] = {}
+        for nid, (mx, my) in self._pos.items():
+            sx, sy = model_to_scene(mx, my)
+            scene_node_positions[nid] = QPointF(sx, sy)
 
-        # Draw nodes by type, applying red outline if highlighted
-        for ntype, color in color_map.items():
-            nlist = [n.id for n in network.nodes if n.type == ntype]
-            if nlist:
-                for nid in nlist:
-                    is_hl = nid in self._highlight_ids
-                    ec = "red" if is_hl else "black"
-                    lw = 3.0 if is_hl else 1.5
-                    nx.draw_networkx_nodes(
-                        G, pos, nodelist=[nid], node_color=color,
-                        node_size=700, ax=self.ax, edgecolors=ec, linewidths=lw
-                    )
-
-        nx.draw_networkx_labels(G, pos, font_size=10, font_weight='bold', ax=self.ax)
-
-        # Draw edges if pipes exist
+        # Draw pipes/edges
         if network.pipes:
             pair_counts = defaultdict(int)
             pair_index = defaultdict(int)
@@ -164,46 +566,60 @@ class GraphView(QWidget):
                     if u > v:
                         rad = -rad
 
-                conn_style = f"arc3,rad={rad}"
-                pipe_id = data.get("id")
-                is_hl = pipe_id in self._highlight_ids
-                is_pump = data.get("has_pump", False)
-
-                edge_style = "dashed" if is_pump else "solid"
-                if is_hl:
-                    edge_color = "red"
-                    width = 3.5
-                else:
-                    edge_color = "crimson" if is_pump else "#333333"
-                    width = 2.0
-
-                nx.draw_networkx_edges(
-                    G, pos, edgelist=[(u, v)],
-                    connectionstyle=conn_style,
-                    arrowstyle='-|>', arrowsize=18,
-                    style=edge_style, edge_color=edge_color,
-                    width=width, ax=self.ax
+                p_item = PipeItem(
+                    pipe_id=data["id"],
+                    start_pos=scene_node_positions[u],
+                    end_pos=scene_node_positions[v],
+                    has_pump=data.get("has_pump", False),
+                    label_text=data.get("label", data["id"]),
+                    curvature=rad,
                 )
+                p_item.set_highlighted(data["id"] in self._highlight_ids)
+                self.scene.addItem(p_item)
 
-                # Requirement 0e: Readable white rounded background box for edge labels
-                edge_label = {(u, v): data["label"]}
-                nx.draw_networkx_edge_labels(
-                    G, pos, edge_labels=edge_label,
-                    connectionstyle=conn_style,
-                    font_size=8, font_color=edge_color,
-                    ax=self.ax, bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.9)
-                )
+        # Draw nodes
+        for node in network.nodes:
+            pos = scene_node_positions[node.id]
+            n_item = NodeItem(node.id, node.type, pos)
+            n_item.set_highlighted(node.id in self._highlight_ids)
+            self.scene.addItem(n_item)
 
-        # Custom Legend
-        legend_elements = [
-            Line2D([0], [0], marker='o', color='w', label='Junction', markerfacecolor='#87CEEB', markersize=10, markeredgecolor='black'),
-            Line2D([0], [0], marker='o', color='w', label='Tank', markerfacecolor='#FFD700', markersize=10, markeredgecolor='black'),
-            Line2D([0], [0], marker='o', color='w', label='Reservoir', markerfacecolor='#FA8072', markersize=10, markeredgecolor='black'),
-            Line2D([0], [0], color='#333333', linestyle='-', lw=2, label='Pipe'),
-            Line2D([0], [0], color='crimson', linestyle='--', lw=2, label='Pump')
-        ]
-        self.ax.legend(handles=legend_elements, loc='upper right', framealpha=0.9)
+        # Legend item
+        self.legend_item = LegendItem()
+        self.scene.addItem(self.legend_item)
+        self.legend_item.setVisible(True)
 
-        self.ax.axis('off')
-        self.figure.tight_layout()
-        self.canvas.draw()
+        if self._needs_fit:
+            self.fit_in_view()
+            self._needs_fit = False
+        else:
+            self.update_legend_position()
+
+    # ------------------------------------------------------------------
+    # Backward compatibility shim for tests
+    # ------------------------------------------------------------------
+
+    @property
+    def ax(self):
+        """Backward-compatibility shim allowing tests to access ax.texts."""
+        view_self = self
+
+        class _AxCompat:
+            @property
+            def texts(self):
+                class _TextItem:
+                    def __init__(self, t):
+                        self._t = t
+
+                    def get_text(self):
+                        return self._t
+
+                items = []
+                for it in view_self.scene.items():
+                    if isinstance(it, NodeItem):
+                        items.append(_TextItem(it.node_id))
+                    elif isinstance(it, QGraphicsSimpleTextItem):
+                        items.append(_TextItem(it.text()))
+                return items
+
+        return _AxCompat()

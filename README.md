@@ -2,7 +2,8 @@
 
 A Windows desktop application for building and analysing water distribution
 networks, converted from an earlier Streamlit web app. Built with
-**PySide6**, **NetworkX**, **NumPy** and **Matplotlib**, and grounded in a
+**PySide6** (including Qt `QGraphicsScene`/`QGraphicsView` network visualization),
+**NetworkX**, **NumPy** and **Matplotlib**, and grounded in a
 research paper on the graph-theoretic and switched-DAE modelling of water
 networks.
 
