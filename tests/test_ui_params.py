@@ -49,6 +49,14 @@ def test_ui_add_node_and_pipe_with_parameters(qapp):
     assert j1.elevation == 15.0
     assert j1.head is None
 
+    # 2b. Add Junction with empty elevation ("not set"): elevation must be None
+    panel.node_elevation_input.setText("")
+    panel.add_node_btn.click()
+    assert len(window.network.nodes) == 3
+    j2 = window.network.nodes[2]
+    assert j2.elevation is None
+
+
     # 3. Add Pipe with Length=350.0, Diameter=0.4, Roughness=3.59e-4
     panel.start_combo.setCurrentText("R1")
     panel.end_combo.setCurrentText("J1")

@@ -300,14 +300,11 @@ class BuildPanel(QWidget):
 
     def _on_add_node(self):
         ntype = self.node_type_combo.currentText().lower()
-        params: Dict[str, Any] = {}
-        elev = _parse_field_value(self.node_elevation_input.text())
-        if elev is not None:
-            params["elevation"] = elev
+        params: Dict[str, Any] = {
+            "elevation": _parse_field_value(self.node_elevation_input.text())
+        }
         if ntype == "reservoir":
-            head = _parse_field_value(self.node_head_input.text())
-            if head is not None:
-                params["head"] = head
+            params["head"] = _parse_field_value(self.node_head_input.text())
         self.node_added.emit(ntype, params)
 
     def _on_add_pipe(self):
@@ -322,16 +319,11 @@ class BuildPanel(QWidget):
         has_pump = self.pump_checkbox.isChecked()
         power = self.pump_power_spin.value() if has_pump else 0.0
 
-        params: Dict[str, Any] = {}
-        l_val = _parse_field_value(self.pipe_length_input.text())
-        if l_val is not None:
-            params["length"] = l_val
-        d_val = _parse_field_value(self.pipe_diameter_input.text())
-        if d_val is not None:
-            params["diameter"] = d_val
-        r_val = _parse_field_value(self.pipe_roughness_input.text())
-        if r_val is not None:
-            params["roughness"] = r_val
+        params: Dict[str, Any] = {
+            "length": _parse_field_value(self.pipe_length_input.text()),
+            "diameter": _parse_field_value(self.pipe_diameter_input.text()),
+            "roughness": _parse_field_value(self.pipe_roughness_input.text()),
+        }
 
         self.pipe_added.emit(start, end, has_pump, power, params)
 
