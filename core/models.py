@@ -187,7 +187,7 @@ class Network:
         type: str,  # noqa: A002
         id: Optional[str] = None,  # noqa: A002
         capacity: Optional[float] = 1000.0,
-        elevation: Optional[float] = 50.0,
+        elevation: Optional[float] = None,
         head: Optional[float] = None,
     ) -> Node:
         """Add a node and return it."""
@@ -379,7 +379,7 @@ class Network:
                 type=nd["type"],
                 id=nd["id"],
                 capacity=nd.get("capacity", 1000.0),
-                elevation=nd.get("elevation", 50.0),
+                elevation=nd.get("elevation", None),
                 head=nd.get("head", None),
             )
         for pd_ in data.get("pipes", []):

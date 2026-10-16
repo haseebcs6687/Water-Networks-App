@@ -19,6 +19,7 @@ hidden_imports = [
     'PySide6.QtWidgets',
     'PySide6.QtSvg',
     'PySide6.QtOpenGL',
+    'PySide6.QtTest',
     'networkx.algorithms.components',
     'networkx.algorithms.cycles',
     'numpy.core._multiarray_umath',
