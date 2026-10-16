@@ -35,6 +35,51 @@ def scene_to_model(sx: float, sy: float, scale: float = SCALE) -> Tuple[float, f
     return (float(sx) / scale, -float(sy) / scale)
 
 
+def measure_pipe_geometry(pipe_item: "PipeItem") -> Dict[str, object]:
+    """Compute geometric measurements from the actual rendered QPainterPath of a PipeItem.
+
+    Returns a dict with:
+        'start_pt': QPointF, path.pointAtPercent(0.0)
+        'end_pt': QPointF, path.pointAtPercent(1.0)
+        'curve_midpoint': QPointF, path.pointAtPercent(0.5) in scene coordinates
+        'chord_midpoint': QPointF, middle of start_pt and end_pt
+        'chord_length': float, Euclidean distance between start_pt and end_pt
+        'signed_displacement': float, perpendicular offset of curve_midpoint from chord
+                              (positive = left of travel direction start -> end in screen view)
+    """
+    path = pipe_item.path
+    start_pt = path.pointAtPercent(0.0)
+    end_pt = path.pointAtPercent(1.0)
+    curve_midpoint = path.pointAtPercent(0.5)
+
+    chord_midpoint = QPointF((start_pt.x() + end_pt.x()) / 2.0, (start_pt.y() + end_pt.y()) / 2.0)
+    chord_dx = end_pt.x() - start_pt.x()
+    chord_dy = end_pt.y() - start_pt.y()
+    chord_length = math.hypot(chord_dx, chord_dy)
+
+    if chord_length < 1e-6:
+        ux, uy = 1.0, 0.0
+    else:
+        ux, uy = chord_dx / chord_length, chord_dy / chord_length
+
+    # Left normal in screen view (positive = left of travel direction start -> end)
+    nx_left, ny_left = uy, -ux
+
+    vx = curve_midpoint.x() - chord_midpoint.x()
+    vy = curve_midpoint.y() - chord_midpoint.y()
+
+    signed_displacement = vx * nx_left + vy * ny_left
+
+    return {
+        "start_pt": start_pt,
+        "end_pt": end_pt,
+        "curve_midpoint": curve_midpoint,
+        "chord_midpoint": chord_midpoint,
+        "chord_length": chord_length,
+        "signed_displacement": signed_displacement,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Graphics Items
 # ---------------------------------------------------------------------------
@@ -287,42 +332,41 @@ class PipeItem(QGraphicsItem):
         p2 = self.end_pos
         dx = p2.x() - p1.x()
         dy = p2.y() - p1.y()
-        length = math.hypot(dx, dy)
-        if length < 1e-4:
+        nodes_len = math.hypot(dx, dy)
+        if nodes_len < 1e-4:
             ux, uy = 1.0, 0.0
         else:
-            ux, uy = dx / length, dy / length
+            ux, uy = dx / nodes_len, dy / nodes_len
         # Left normal in screen view (positive curvature is left of travel direction)
         nx_left, ny_left = uy, -ux
 
+        # End points clipped at node boundaries along the direct line between nodes
+        if nodes_len > 2.0 * NODE_RADIUS:
+            start_pt = QPointF(p1.x() + ux * NODE_RADIUS, p1.y() + uy * NODE_RADIUS)
+            end_pt = QPointF(p2.x() - ux * NODE_RADIUS, p2.y() - uy * NODE_RADIUS)
+        else:
+            start_pt = p1
+            end_pt = p2
+
+        chord_dx = end_pt.x() - start_pt.x()
+        chord_dy = end_pt.y() - start_pt.y()
+        chord_len = math.hypot(chord_dx, chord_dy)
+        if chord_len < 1e-4:
+            chord_len = 1.0
+
         # Chord midpoint
-        mx = (p1.x() + p2.x()) / 2.0
-        my = (p1.y() + p2.y()) / 2.0
+        mx = (start_pt.x() + end_pt.x()) / 2.0
+        my = (start_pt.y() + end_pt.y()) / 2.0
 
         self.curvature = self.auto_curvature + self.bend_ratio
         if abs(self.curvature) < 1e-4:
             qx, qy = mx, my
         else:
-            # For quadratic Bezier, curve midpoint offset = 0.5 * (Q - M).
-            # Thus Q - M = 2.0 * offset = 2.0 * curvature * length * n_left.
-            qx = mx + 2.0 * self.curvature * length * nx_left
-            qy = my + 2.0 * self.curvature * length * ny_left
-
-        # Start point at start node boundary
-        v1x, v1y = qx - p1.x(), qy - p1.y()
-        l1 = math.hypot(v1x, v1y)
-        if l1 > NODE_RADIUS:
-            start_pt = QPointF(p1.x() + (v1x / l1) * NODE_RADIUS, p1.y() + (v1y / l1) * NODE_RADIUS)
-        else:
-            start_pt = p1
-
-        # End point at end node boundary
-        v2x, v2y = p2.x() - qx, p2.y() - qy
-        l2 = math.hypot(v2x, v2y)
-        if l2 > NODE_RADIUS:
-            end_pt = QPointF(p2.x() - (v2x / l2) * NODE_RADIUS, p2.y() - (v2y / l2) * NODE_RADIUS)
-        else:
-            end_pt = p2
+            # For quadratic Bezier, curve midpoint B(0.5) = M + 0.5 * (Q - M).
+            # To have curve midpoint displaced by curvature * chord_len * n_left,
+            # Q - M = 2.0 * curvature * chord_len * n_left.
+            qx = mx + 2.0 * self.curvature * chord_len * nx_left
+            qy = my + 2.0 * self.curvature * chord_len * ny_left
 
         self.path = QPainterPath()
         self.path.moveTo(start_pt)
@@ -347,18 +391,16 @@ class PipeItem(QGraphicsItem):
         tip = end_pt
         left_barb = QPointF(
             tip.x() - tux * arrow_len + tnx * arrow_half_width,
-            tip.y() - tuy * arrow_len + tny * arrow_half_width
+            tip.y() - tuy * arrow_len + tny * arrow_half_width,
         )
         right_barb = QPointF(
             tip.x() - tux * arrow_len - tnx * arrow_half_width,
-            tip.y() - tuy * arrow_len - tny * arrow_half_width
+            tip.y() - tuy * arrow_len - tny * arrow_half_width,
         )
         self.arrow_poly = QPolygonF([tip, left_barb, right_barb])
 
         # Exact midpoint on the quadratic Bezier curve
-        mid_x = 0.25 * start_pt.x() + 0.5 * qx + 0.25 * end_pt.x()
-        mid_y = 0.25 * start_pt.y() + 0.5 * qy + 0.25 * end_pt.y()
-        self.curve_midpoint = QPointF(mid_x, mid_y)
+        self.curve_midpoint = self.path.pointAtPercent(0.5)
         self.label_pos = self.curve_midpoint
 
         if hasattr(self, "handle_item") and self.handle_item:
@@ -410,21 +452,34 @@ class PipeItem(QGraphicsItem):
         p2 = self.end_pos
         dx = p2.x() - p1.x()
         dy = p2.y() - p1.y()
-        length = math.hypot(dx, dy)
-        if length < 1e-4:
+        nodes_len = math.hypot(dx, dy)
+        if nodes_len < 1e-4:
             return
 
-        ux, uy = dx / length, dy / length
+        ux, uy = dx / nodes_len, dy / nodes_len
         nx_left, ny_left = uy, -ux
 
-        mx = (p1.x() + p2.x()) / 2.0
-        my = (p1.y() + p2.y()) / 2.0
+        if nodes_len > 2.0 * NODE_RADIUS:
+            start_pt = QPointF(p1.x() + ux * NODE_RADIUS, p1.y() + uy * NODE_RADIUS)
+            end_pt = QPointF(p2.x() - ux * NODE_RADIUS, p2.y() - uy * NODE_RADIUS)
+        else:
+            start_pt = p1
+            end_pt = p2
+
+        chord_dx = end_pt.x() - start_pt.x()
+        chord_dy = end_pt.y() - start_pt.y()
+        chord_len = math.hypot(chord_dx, chord_dy)
+        if chord_len < 1e-4:
+            return
+
+        mx = (start_pt.x() + end_pt.x()) / 2.0
+        my = (start_pt.y() + end_pt.y()) / 2.0
 
         vx = scene_pos.x() - mx
         vy = scene_pos.y() - my
 
         perp_offset = vx * nx_left + vy * ny_left
-        total_curvature = perp_offset / length
+        total_curvature = perp_offset / chord_len
 
         raw_bend = total_curvature - self.auto_curvature
         clamped_bend = max(-1.5, min(1.5, raw_bend))

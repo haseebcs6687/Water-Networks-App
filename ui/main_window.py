@@ -106,7 +106,7 @@ class MainWindow(QMainWindow):
 
         self.checks_view.warning_double_clicked.connect(self._on_warning_double_clicked)
         self.graph_view.positions_changed.connect(self._on_positions_changed)
-        self.graph_view.edge_bends_changed.connect(self._mark_edited)
+        self.graph_view.edge_bends_changed.connect(self._on_positions_changed)
         self.graph_view.node_clicked.connect(self._on_graph_node_clicked)
         self.graph_view.pipe_clicked.connect(self._on_graph_pipe_clicked)
         self.graph_view.background_clicked.connect(self._on_graph_background_clicked)

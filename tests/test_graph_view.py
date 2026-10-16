@@ -12,7 +12,8 @@ from PySide6.QtWidgets import QApplication
 from core.models import Network
 from core.examples import example_paper_network, example_broken_network
 from ui.graph_view import (
-    GraphView, NodeItem, PipeItem, model_to_scene, scene_to_model, SCALE
+    GraphView, NodeItem, PipeItem, model_to_scene, scene_to_model, SCALE,
+    measure_pipe_geometry
 )
 from ui.main_window import MainWindow
 
@@ -840,16 +841,18 @@ def test_pipe_bend_interaction_path_and_endpoints(qapp):
     assert ratio is not None
     assert ratio > 0.0, "Upward drag for East travel must be positive bend ratio"
 
-    # Midpoint displacement is about ratio * chord length
-    disp = math.hypot(p1.curve_midpoint.x() - mx, p1.curve_midpoint.y() - my)
-    assert abs(disp - ratio * chord) / chord < 0.05
+    # Midpoint displacement equals ratio * chord within 0.5 px
+    m = measure_pipe_geometry(p1)
+    disp = m["signed_displacement"]
+    chord = m["chord_length"]
+    assert abs(disp - ratio * chord) <= 0.5
 
     # Label stays at curve midpoint
     assert p1.label_pos == p1.curve_midpoint
 
     # Both endpoints stay on node boundaries (distance to node center == NODE_RADIUS = 20.0)
-    start_pt = p1.path.pointAtPercent(0.0)
-    end_pt = p1.path.pointAtPercent(1.0)
+    start_pt = m["start_pt"]
+    end_pt = m["end_pt"]
     d_start = math.hypot(start_pt.x() - p1.start_pos.x(), start_pt.y() - p1.start_pos.y())
     d_end = math.hypot(end_pt.x() - p1.end_pos.x(), end_pt.y() - p1.end_pos.y())
     assert abs(d_start - 20.0) < 1e-3
@@ -880,11 +883,9 @@ def test_pipe_bend_ratio_survives_node_drag(qapp):
     gv = window.graph_view
     p1 = next(p for p in gv.pipe_items() if p.pipe_id == "P1")
     assert p1.bend_ratio == 0.25
-    initial_chord = math.hypot(p1.end_pos.x() - p1.start_pos.x(), p1.end_pos.y() - p1.start_pos.y())
-    initial_disp = math.hypot(
-        p1.curve_midpoint.x() - (p1.start_pos.x() + p1.end_pos.x()) / 2.0,
-        p1.curve_midpoint.y() - (p1.start_pos.y() + p1.end_pos.y()) / 2.0,
-    )
+    m_init = measure_pipe_geometry(p1)
+    initial_chord = m_init["chord_length"]
+    initial_disp = m_init["signed_displacement"]
 
     # Drag J2 to change chord length
     j2 = next(n for n in gv.node_items() if n.node_id == "J2")
@@ -902,13 +903,14 @@ def test_pipe_bend_ratio_survives_node_drag(qapp):
     assert p1.bend_ratio == 0.25
     assert gv.get_edge_bends().get("P1") == 0.25
 
-    new_chord = math.hypot(p1.end_pos.x() - p1.start_pos.x(), p1.end_pos.y() - p1.start_pos.y())
-    new_disp = math.hypot(
-        p1.curve_midpoint.x() - (p1.start_pos.x() + p1.end_pos.x()) / 2.0,
-        p1.curve_midpoint.y() - (p1.start_pos.y() + p1.end_pos.y()) / 2.0,
-    )
-    # Displacement scales with chord length
-    assert abs((new_disp / new_chord) - (initial_disp / initial_chord)) < 0.02
+    m_new = measure_pipe_geometry(p1)
+    new_chord = m_new["chord_length"]
+    new_disp = m_new["signed_displacement"]
+
+    # Chord length really changed by more than 1 px
+    assert abs(new_chord - initial_chord) > 1.0, f"Chord length must change: was {initial_chord}, now {new_chord}"
+    # Displacement equals ratio * new chord within 0.5 px
+    assert abs(new_disp - p1.bend_ratio * new_chord) <= 0.5
 
     window.setWindowModified(False)
     window.close()
