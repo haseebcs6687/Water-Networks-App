@@ -44,10 +44,15 @@ excludes = [
     'pandas',
 ]
 
+binaries = [
+    ('core/lib/epanet2.dll', 'core/lib'),
+    ('core/lib/epanet2.dll', '.'),
+]
+
 a = Analysis(
     ['main.py'],
     pathex=[SPECPATH],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hidden_imports,
     hookspath=[],

@@ -325,6 +325,43 @@ def run_selftest(log_path: Optional[Path] = None) -> int:
         except Exception as e:
             write_log(f"Warning: could not delete temp file: {e}")
 
+        # 8. Real EPANET engine execution
+        write_log("Testing real EPANET engine runner...")
+        from core.epanet_runner import run_epanet, get_epanet_dll_path
+        from core.scenario import Scenario, ValveId
+        from core.physics import PhysicsSettings
+        from core.dae_model import build_switched_dae, steady_state
+
+        dll_path = get_epanet_dll_path()
+        write_log(f"EPANET DLL located at: {dll_path}")
+
+        # Build specimen network
+        net_spec = Network()
+        net_spec.add_node("reservoir", id="R1", elevation=20.0, head=50.0)
+        net_spec.add_node("junction", id="J1", elevation=5.0)
+        net_spec.add_node("reservoir", id="R2", elevation=0.0, head=46.0)
+        net_spec.add_pipe("R1", "J1", id="P1", length=400.0, diameter=0.4, roughness=0.000359)
+        net_spec.add_pipe("J1", "R2", id="P2", length=250.0, diameter=0.4, roughness=0.000359, valve_start=True, valve_end=True)
+
+        v1 = ValveId("P2", "start")
+        v2 = ValveId("P2", "end")
+        sc2 = Scenario.matlab_specimen(2, v1, v2)
+        sc2 = Scenario(title=sc2.title, initial=sc2.initial, events=sc2.events, t_end=20.0)
+        settings = PhysicsSettings(friction_mode="constant", friction_factor=0.02)
+
+        ep_res = run_epanet(net_spec, sc2, settings)
+        q_ep = float(ep_res.series("Pipe_1_Flow")[-1])
+
+        dae_spec = build_switched_dae(net_spec, settings)
+        x_dae = steady_state(dae_spec, (1, 1))
+        q_dae = float(x_dae[0])
+
+        diff_q = abs(q_ep - q_dae)
+        write_log(f"EPANET engine version: {ep_res.engine_version}")
+        write_log(f"EPANET Q (t=20s): {q_ep:.6f} m3/s, DAE steady Q: {q_dae:.6f} m3/s, diff: {diff_q:.6e}")
+        assert diff_q <= 1e-3, f"EPANET vs DAE Q difference {diff_q} exceeds tolerance 1e-3"
+        write_log("EPANET engine execution verified successfully.")
+
         window.close()
         app.processEvents()
 
@@ -342,6 +379,11 @@ def main():
     setup_exception_hook()
 
     if "--selftest" in sys.argv:
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.kernel32.AttachConsole(-1)
+            except Exception:
+                pass
         ret = run_selftest()
         sys.exit(ret)
 

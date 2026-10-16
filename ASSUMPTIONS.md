@@ -281,8 +281,46 @@ These decisions were made while implementing the v2.0 switched-DAE comparison fe
 
 **Decision**: Dirac impulses $\delta_{t_s}$ resulting from instantaneous valve closures are recorded as analytical impulse coefficients in `ImpulseRecord` with cross-check validation against formula (6) of the paper ($x[t_s] = -E^{\text{imp}} x(t_s^-)$).
 
-- In data arrays, samples at $t_s^-$ and $t_s^+$ record the algebraic states immediately before and after the switch.
-- In UI visualizations (and the MATLAB comparison script), Dirac impulses are depicted as vertical arrows scaled by impulse magnitude rather than finite bars, reflecting their distribution-theoretic nature. This visual convention is not yet confirmed by the client.
+---
+
+## 19. EPANET engine and its license
+
+**Decision**: The application runs the official real EPANET engine using Python's standard `ctypes` library directly on the pre-compiled C dynamic library `epanet2.dll` (Open Water Analytics / EPA EPANET 2.3.5, version code `20305`).
+
+- **License**: MIT License (OWA EPANET 2.2+) and Public Domain (US EPA EPANET 2.0). License text is MIT/Public Domain, fully compatible with commercial distribution and offline bundled executables.
+- **Python dependencies**: 0 new pip packages added (no pandas, no scipy, no wntr; numpy-only on the Python side).
+- **Executable packaging**: `epanet2.dll` adds only 454 KB to the PyInstaller distribution. It operates 100% offline at runtime without requiring Python or administrative rights.
+- **Thread safety**: Every run uses EPANET's project handle API (`EN_createproject`, `EN_open`, `EN_openH`, `EN_closeH`, `EN_close`, `EN_deleteproject`) ensuring independent state for worker threads with zero leakage between runs.
+
+---
+
+## 20. EPANET works in whole seconds
+
+**Decision**: Non-integer valve switch times are rejected with a clear `ScenarioError`.
+
+- EPANET's internal clock and input file syntax specify event times in integer seconds (or `h:mm:ss`).
+- Sub-second switching times cannot be represented natively in standard EPANET control rules. To prevent ambiguous rounding, non-integer event times raise `ScenarioError: EPANET requires switch times in whole seconds, got <t>s for valve <valve>`.
+
+---
+
+## 21. Constant friction is exported as minor losses
+
+**Decision**: When `settings.friction_mode == "constant"`, each pipe is exported to EPANET as a 1 cm stub pipe ($L = 0.01$ m) carrying a minor loss coefficient $K = f \cdot L / D$.
+
+- This reproduces exactly the MATLAB reference implementation (`writeInp2` in `switchedDAE3_vs_EPANET.m`).
+- In this mode, pipe wall roughness is irrelevant because head loss is governed by the lumped minor loss $h_L = K \frac{v^2}{2g} = \frac{f L}{D} \frac{v^2}{2g}$. For the specimen network with $f = 0.02, D = 0.4$ m, this yields $K_1 = 0.02 \times 400 / 0.4 = 20.0$ and $K_2 = 0.02 \times 250 / 0.4 = 12.5$.
+- For `darcy_weisbach` and `swamee_jain` modes, the real physical length ($L$), diameter ($D$), and roughness ($\varepsilon$) are exported with $K = 0$.
+
+---
+
+## 22. Valve elements are TCV with zero loss
+
+**Decision**: Valves are represented in EPANET as Throttle Control Valves (`TCV`) with open setting `0` (or `OPEN`), minor loss `0`, and diameter matching the connected pipe diameter.
+
+- When a valve is at the start of a pipe, an intermediate junction `<pipe>_L` is created at the elevation of the start node. The TCV link connects the start node junction to `<pipe>_L`, and the pipe link connects `<pipe>_L` to the downstream node.
+- Similarly, a valve at the end of a pipe introduces intermediate junction `<pipe>_R` at the end node's elevation.
+- This reproduces MATLAB's N5/N4/N6/N9 layout and provides exact correspondence with DAE state variables $P_L$ and $P_R$.
+
 
 
 

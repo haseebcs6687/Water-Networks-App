@@ -27,3 +27,4 @@ def test_in_process_selftest(tmp_path: Path) -> None:
     assert "Paper network verified" in content
     assert "Broken network verified" in content
     assert "Project successfully reloaded and verified" in content
+    assert "EPANET engine execution verified successfully" in content

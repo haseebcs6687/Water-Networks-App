@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+- **Real EPANET Engine Runner (`core/epanet_runner.py`)**:
+  - Direct execution of the official EPANET 2.3.5 / 2.2+ engine via standard `ctypes` on standalone `core/lib/epanet2.dll` (MIT License / Public Domain).
+  - Project handle API lifecycle (`EN_createproject`, `EN_open`, `EN_openH`, `EN_initH`, `EN_runH`, `EN_nextH`, `EN_closeH`, `EN_close`, `EN_deleteproject`) ensuring thread-safe execution in worker threads with zero state leaks.
+  - Generates `EpanetResult` containing simulation times, state trajectories `X` formatted in identical column ordering to the DAE solver (flows, then pressure heads), state labels, engine version, input text, and translated warning strings.
+- **Generic EPANET Export (`core/epanet_export.py`)**:
+  - `write_inp` and `export_epanet` generating EPANET 2.2 input files (`.inp`) with SI metric units (`Units CMS`, `Headloss D-W`), viscosity from `PhysicsSettings.nu`, duration from scenario `t_end`, and 1-second hydraulic/report timesteps.
+  - Reproduces the MATLAB reference network layout: lossless connector pipes for reservoir state capture, TCV valves with setting 0 / loss 0 for pipe valves with intermediate `<pipe>_L` and `<pipe>_R` junctions, and 1 cm stub pipes with minor losses $K = f L / D$ for constant friction mode.
+  - Comprehensive `ExportMap` bidirectional mapping between DAE state vector labels and EPANET link/node elements.
+  - Whole-second switch time validation rejecting sub-second switching with readable `ScenarioError`.
+- **Standalone PyInstaller Packaging Proof**:
+  - Executable includes `epanet2.dll` and verified to run 100% offline in isolated environments with cleaned PATH (no Python runtime or administrative rights required).
+  - Extended `--selftest` with automated real EPANET engine execution on specimen scenario 2.
 - **Theorem 8 Switched DAE Solver (`core/dae_solver.py`)**:
   - Pure NumPy implementation of Wong sequences and modified quasi-Weierstrass form (QWF) decomposition into differential and algebraic subspaces.
   - Faithful SVD-based linear algebra helpers (`orthT`, `nullT`, `rnk`, `preimg`, `extendBasis`) with $10^{-10} \max(1, s_{\max})$ tolerance.

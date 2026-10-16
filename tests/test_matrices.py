@@ -1,4 +1,4 @@
-﻿"""tests/test_matrices.py – Pytest suite for core/ calculation module.
+"""tests/test_matrices.py – Pytest suite for core/ calculation module.
 
 All tests are self-contained; the only external dependency is numpy.
 The legacy streamlit_app is imported via namespace package (no __init__.py
@@ -38,6 +38,7 @@ from core import (
 # Import legacy with streamlit mocked
 # ---------------------------------------------------------------------------
 sys.modules.setdefault("streamlit", MagicMock())
+sys.modules.setdefault("pandas", MagicMock())
 
 import legacy.streamlit_app as _legacy  # noqa: E402
 
