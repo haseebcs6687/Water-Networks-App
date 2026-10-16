@@ -37,14 +37,15 @@ Physical network parameters can be entered during node/pipe creation or modified
 
 Empty fields represent unset parameters (`None`); no default numbers are invented. The parameter status bar indicates if all parameters are complete or provides a detailed breakdown of missing fields.
 
-## Moving nodes
+## Moving nodes and bending pipes
 
-Nodes can be positioned interactively on the Network canvas:
-- **Drag nodes**: Click and drag any node using the mouse. All attached pipes, arrowheads, and labels follow the movement live, preserving distinct curvatures for parallel pipes. Moving a node marks the project as modified, and positions are preserved when saving to `.wnet`.
-- **Canvas panning and zoom**: Dragging on empty background pans the view without moving any nodes. Use the mouse wheel to zoom smoothly around the cursor.
+Network elements can be positioned and shaped interactively on the Network canvas:
+- **Drag nodes**: Click and drag any node using the mouse. All attached pipes, arrowheads, and labels follow the movement live, preserving distinct curvatures and bend ratios. Moving a node marks the project as modified, and positions are preserved when saving to `.wnet`.
+- **Bend pipes**: Drag a pipe's circular handle (visible on hover or when selected) or drag its label to bend the pipe live. Endpoints stay neatly clipped at node boundaries while the curve, arrowhead, and label update continuously. Double-clicking the handle resets the bend to automatic curvature. Dragging the pipe body does nothing, while clicking the pipe body selects it.
+- **Canvas panning and zoom**: Dragging on empty background pans the view without moving nodes or bending pipes. Use the mouse wheel to zoom smoothly around the cursor.
 - **Selection sync**: Clicking a node or pipe in the graph selects its row in the corresponding table and displays its properties; selecting a table row highlights the element with a blue selection ring or line in the graph. Clicking the canvas background clears the selection.
 - **Tooltips**: Hovering over any node or pipe reveals physical parameters and connection details in metric units.
-- **Re-layout and Fit**: Click **Re-layout** to recalculate automatic spring layout positions (marking the project modified), or click **Fit** to frame all elements with comfortable padding within the viewport.
+- **Re-layout and Fit**: Click **Re-layout** to recalculate automatic spring layout positions and clear all custom pipe bends (marking the project modified), or click **Fit** to frame all elements with comfortable padding within the viewport.
 
 
 ## Project layout

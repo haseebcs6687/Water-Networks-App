@@ -204,5 +204,17 @@ after `from_dict` round-trips.
 - **Empty Canvas Click Clears Selection**: Clicking empty canvas background clears both table selection and graph selection without modifying the network. Panning the view does not clear selection.
 - **Tooltip Formatting & Metric Units**: Hover tooltips show physical quantities in standard metric units (`m` for length/elevation/head/diameter/roughness, `kW` for pump power) and explicitly display `"not set"` for `None` values. Reservoir total head is displayed only for reservoirs.
 
+---
+
+## 14. Pipe Bending (Moving Edges)
+
+- **Moving an Edge = Bending It**: The client requested that "edges and nodes can be moved via cursor". Since nodes already move with all attached pipes following them, moving an edge has been interpreted as bending it (the client has not explicitly confirmed this interpretation). Dragging the pipe body does nothing (so panning on the background and node dragging remain unaffected), while dragging the curve midpoint handle or pipe label bends the pipe.
+- **Bend Ratio Definition**: A bend is parameterized by a dimensionless bend ratio = perpendicular offset of the curve midpoint divided by the chord length, added to the automatic curvature used to separate parallel pipes. Bend ratios are clamped to `[-1.5, 1.5]`. Sign convention: positive = left of the travel direction (start $\to$ end) in screen coordinates ($+Y$ down).
+- **Bend Ratio Survives Node Dragging**: When an attached node is moved, the pipe retains its bend ratio, so the physical displacement scales proportionally with the new chord length.
+- **Optional Key in `.wnet` v2**: Saved files store non-zero bends in an optional top-level `"edge_bends": {pipe_id: float}` mapping. If no pipes are bent, the key is omitted. File version remains 2, and loaders ignore unknown keys, ensuring full backward compatibility.
+- **Re-layout Clears Bends**: Clicking "Re-layout" recalculates the node layout and clears all custom edge bends back to automatic separation curvature. Deleting a pipe also removes its associated bend.
+- **Single Modified Notification**: `edge_bends_changed` is emitted exactly once on mouse release after an actual drag has completed (not on clicks or programmatic setting). Loading a project or example resets bends silently and never marks the project modified.
+
+
 
 

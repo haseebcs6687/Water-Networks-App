@@ -2,6 +2,7 @@
 
 import os
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+import math
 
 import pytest
 from PySide6.QtCore import Qt, QPoint, QPointF
@@ -792,4 +793,391 @@ def test_tooltips_content(qapp):
     assert "Length: not set" in p2_tip
     assert "Diameter: not set" in p2_tip
     assert "Roughness: not set" in p2_tip
+
+
+def test_pipe_bend_interaction_path_and_endpoints(qapp):
+    """Test that dragging the handle bends the pipe, midpoint moves about ratio*chord,
+
+    endpoints stay clipped at node boundaries, label follows midpoint, and sign convention holds.
+    """
+    net = Network()
+    net.add_node("junction", id="J1")
+    net.add_node("junction", id="J2")
+    net.add_pipe("J1", "J2", id="P1")
+
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window.network = net
+    # Position J1 at (0, 0) and J2 at (1, 0) so travel direction is +x (East)
+    window.graph_view.set_positions({"J1": (0.0, 0.0), "J2": (1.0, 0.0)})
+    window.refresh()
+    qapp.processEvents()
+    window.graph_view.fit_in_view()
+    qapp.processEvents()
+
+    gv = window.graph_view
+    p1 = next(p for p in gv.pipe_items() if p.pipe_id == "P1")
+    p1.setSelected(True)
+    qapp.processEvents()
+
+    chord = math.hypot(p1.end_pos.x() - p1.start_pos.x(), p1.end_pos.y() - p1.start_pos.y())
+    mx = (p1.start_pos.x() + p1.end_pos.x()) / 2.0
+    my = (p1.start_pos.y() + p1.end_pos.y()) / 2.0
+
+    # Drag handle upward (screen -y, left of East travel direction)
+    handle_vp = gv.view.mapFromScene(p1.handle_item.scenePos())
+    target_vp = handle_vp + QPoint(0, -50)
+
+    QTest.mousePress(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, handle_vp)
+    qapp.processEvents()
+    QTest.mouseMove(gv.view.viewport(), target_vp)
+    qapp.processEvents()
+    QTest.mouseRelease(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, target_vp)
+    qapp.processEvents()
+
+    ratio = gv.get_edge_bends().get("P1")
+    assert ratio is not None
+    assert ratio > 0.0, "Upward drag for East travel must be positive bend ratio"
+
+    # Midpoint displacement is about ratio * chord length
+    disp = math.hypot(p1.curve_midpoint.x() - mx, p1.curve_midpoint.y() - my)
+    assert abs(disp - ratio * chord) / chord < 0.05
+
+    # Label stays at curve midpoint
+    assert p1.label_pos == p1.curve_midpoint
+
+    # Both endpoints stay on node boundaries (distance to node center == NODE_RADIUS = 20.0)
+    start_pt = p1.path.pointAtPercent(0.0)
+    end_pt = p1.path.pointAtPercent(1.0)
+    d_start = math.hypot(start_pt.x() - p1.start_pos.x(), start_pt.y() - p1.start_pos.y())
+    d_end = math.hypot(end_pt.x() - p1.end_pos.x(), end_pt.y() - p1.end_pos.y())
+    assert abs(d_start - 20.0) < 1e-3
+    assert abs(d_end - 20.0) < 1e-3
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_pipe_bend_ratio_survives_node_drag(qapp):
+    """Test that bend ratio is preserved when a node is dragged and displacement scales with chord."""
+    net = Network()
+    net.add_node("junction", id="J1")
+    net.add_node("junction", id="J2")
+    net.add_pipe("J1", "J2", id="P1")
+
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window.network = net
+    window.graph_view.set_positions({"J1": (0.0, 0.0), "J2": (1.0, 0.0)})
+    window.graph_view.set_edge_bends({"P1": 0.25})
+    window.refresh()
+    qapp.processEvents()
+    window.graph_view.fit_in_view()
+    qapp.processEvents()
+
+    gv = window.graph_view
+    p1 = next(p for p in gv.pipe_items() if p.pipe_id == "P1")
+    assert p1.bend_ratio == 0.25
+    initial_chord = math.hypot(p1.end_pos.x() - p1.start_pos.x(), p1.end_pos.y() - p1.start_pos.y())
+    initial_disp = math.hypot(
+        p1.curve_midpoint.x() - (p1.start_pos.x() + p1.end_pos.x()) / 2.0,
+        p1.curve_midpoint.y() - (p1.start_pos.y() + p1.end_pos.y()) / 2.0,
+    )
+
+    # Drag J2 to change chord length
+    j2 = next(n for n in gv.node_items() if n.node_id == "J2")
+    j2_vp = gv.view.mapFromScene(j2.scenePos())
+    target_vp = j2_vp + QPoint(80, -40)
+
+    QTest.mousePress(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, j2_vp)
+    qapp.processEvents()
+    QTest.mouseMove(gv.view.viewport(), target_vp)
+    qapp.processEvents()
+    QTest.mouseRelease(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, target_vp)
+    qapp.processEvents()
+
+    # Bend ratio is strictly preserved
+    assert p1.bend_ratio == 0.25
+    assert gv.get_edge_bends().get("P1") == 0.25
+
+    new_chord = math.hypot(p1.end_pos.x() - p1.start_pos.x(), p1.end_pos.y() - p1.start_pos.y())
+    new_disp = math.hypot(
+        p1.curve_midpoint.x() - (p1.start_pos.x() + p1.end_pos.x()) / 2.0,
+        p1.curve_midpoint.y() - (p1.start_pos.y() + p1.end_pos.y()) / 2.0,
+    )
+    # Displacement scales with chord length
+    assert abs((new_disp / new_chord) - (initial_disp / initial_chord)) < 0.02
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_pipe_bend_double_click_resets(qapp):
+    """Test that double clicking the handle resets bend to automatic curvature."""
+    net = Network()
+    net.add_node("junction", id="J1")
+    net.add_node("junction", id="J2")
+    net.add_pipe("J1", "J2", id="P1")
+
+    gv = GraphView()
+    gv.set_positions({"J1": (0.0, 0.0), "J2": (1.0, 0.0)})
+    gv.set_edge_bends({"P1": 0.4})
+    gv.draw_network(net)
+    gv.resize(800, 600)
+    gv.show()
+    qapp.processEvents()
+    gv.fit_in_view()
+    qapp.processEvents()
+
+    p1 = gv.pipe_items()[0]
+    p1.setSelected(True)
+    qapp.processEvents()
+    assert p1.handle_item.isVisible()
+
+    signals = []
+    gv.edge_bends_changed.connect(lambda: signals.append(1))
+
+    handle_vp = gv.view.mapFromScene(p1.handle_item.scenePos())
+    QTest.mouseDClick(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, handle_vp)
+    qapp.processEvents()
+
+    assert len(signals) == 1
+    assert p1.bend_ratio == 0.0
+    assert gv.get_edge_bends() == {}
+    gv.close()
+
+
+def test_edge_bends_changed_signal_and_click_behavior(qapp):
+    """Test edge_bends_changed fires exactly once per drag, 0 on click, and pipe body click selects."""
+    net = Network()
+    net.add_node("junction", id="J1")
+    net.add_node("junction", id="J2")
+    net.add_pipe("J1", "J2", id="P1")
+
+    gv = GraphView()
+    gv.set_positions({"J1": (0.0, 0.0), "J2": (1.0, 0.0)})
+    gv.draw_network(net)
+    gv.resize(800, 600)
+    gv.show()
+    qapp.processEvents()
+    gv.fit_in_view()
+    qapp.processEvents()
+
+    p1 = gv.pipe_items()[0]
+    p1.setSelected(True)
+    qapp.processEvents()
+
+    bend_signals = []
+    pipe_clicks = []
+    gv.edge_bends_changed.connect(lambda: bend_signals.append(1))
+    gv.pipe_clicked.connect(lambda pid: pipe_clicks.append(pid))
+
+    # 1. Plain click on handle without move
+    handle_vp = gv.view.mapFromScene(p1.handle_item.scenePos())
+    QTest.mousePress(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, handle_vp)
+    qapp.processEvents()
+    QTest.mouseRelease(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, handle_vp)
+    qapp.processEvents()
+    assert len(bend_signals) == 0, "Plain click must not emit edge_bends_changed"
+
+    # 2. Drag handle
+    target_vp = handle_vp + QPoint(0, -40)
+    QTest.mousePress(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, handle_vp)
+    qapp.processEvents()
+    QTest.mouseMove(gv.view.viewport(), target_vp)
+    qapp.processEvents()
+    QTest.mouseRelease(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, target_vp)
+    qapp.processEvents()
+    assert len(bend_signals) == 1, "Drag must emit edge_bends_changed exactly once"
+
+    # 3. Click pipe body
+    body_scene = p1.path.pointAtPercent(0.3)
+    body_vp = gv.view.mapFromScene(body_scene)
+    QTest.mousePress(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, body_vp)
+    qapp.processEvents()
+    QTest.mouseRelease(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, body_vp)
+    qapp.processEvents()
+    assert pipe_clicks == ["P1"]
+    assert len(bend_signals) == 1  # No extra bend signal
+
+    # 4. Drag pipe body does nothing to bends
+    QTest.mousePress(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, body_vp)
+    qapp.processEvents()
+    QTest.mouseMove(gv.view.viewport(), body_vp + QPoint(30, 30))
+    qapp.processEvents()
+    QTest.mouseRelease(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, body_vp + QPoint(30, 30))
+    qapp.processEvents()
+    assert len(bend_signals) == 1
+    gv.close()
+
+
+def test_pipe_bend_modified_flag_and_save_reopen(qapp, tmp_path):
+    """Test MainWindow modified flag behavior and save/reopen round-trip."""
+    from core.examples import example_paper_network
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window._on_load_example(example_paper_network)
+    qapp.processEvents()
+    assert not window.isWindowModified()
+
+    gv = window.graph_view
+    p1 = next(p for p in gv.pipe_items() if p.pipe_id == "P1")
+    p1.setSelected(True)
+    qapp.processEvents()
+
+    handle_vp = gv.view.mapFromScene(p1.handle_item.scenePos())
+    target_vp = handle_vp + QPoint(0, -35)
+
+    QTest.mousePress(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, handle_vp)
+    qapp.processEvents()
+    QTest.mouseMove(gv.view.viewport(), target_vp)
+    qapp.processEvents()
+    QTest.mouseRelease(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, target_vp)
+    qapp.processEvents()
+
+    assert window.isWindowModified()
+    bends = gv.get_edge_bends()
+    assert "P1" in bends
+    bend_val = bends["P1"]
+
+    save_path = tmp_path / "saved_bend.wnet"
+    window._current_filepath = save_path
+    assert window._on_save()
+    assert not window.isWindowModified()
+
+    # Reopen in fresh window
+    w2 = MainWindow()
+    w2.resize(1280, 800)
+    w2.show()
+    w2.load_file(save_path)
+    qapp.processEvents()
+
+    assert not w2.isWindowModified(), "Loading file must not leave window modified"
+    restored = w2.graph_view.get_edge_bends()
+    assert "P1" in restored
+    assert abs(restored["P1"] - bend_val) < 1e-4
+
+    # Open file without bends
+    no_bends_path = tmp_path / "no_bends.wnet"
+    from core.io import save_project
+    save_project(no_bends_path, window.network, window.graph_view.get_positions(), edge_bends=None)
+
+    w3 = MainWindow()
+    w3.resize(1280, 800)
+    w3.show()
+    w3.load_file(no_bends_path)
+    qapp.processEvents()
+    assert not w3.isWindowModified()
+    assert w3.graph_view.get_edge_bends() == {}
+
+    window.close()
+    w2.close()
+    w3.close()
+
+
+def test_parallel_pipes_bend_distinct_paths(qapp):
+    """Test that bending one of two parallel pipes keeps their paths and curvatures distinct."""
+    net = Network()
+    net.add_node("junction", id="J1")
+    net.add_node("junction", id="J2")
+    net.add_pipe("J1", "J2", id="P1")
+    net.add_pipe("J1", "J2", id="P2")
+
+    gv = GraphView()
+    gv.set_positions({"J1": (0.0, 0.0), "J2": (1.0, 0.0)})
+    gv.draw_network(net)
+
+    p1 = next(p for p in gv.pipe_items() if p.pipe_id == "P1")
+    p2 = next(p for p in gv.pipe_items() if p.pipe_id == "P2")
+
+    assert p1.curvature != p2.curvature
+    assert p1.path != p2.path
+
+    # Bend P1
+    gv.set_edge_bends({"P1": 0.5})
+    assert p1.bend_ratio == 0.5
+    assert p2.bend_ratio == 0.0
+    assert p1.curvature != p2.curvature
+    assert p1.path != p2.path
+
+
+def test_deleting_pipe_and_relayout_clears_bends(qapp):
+    """Test that deleting a pipe removes its bend, and re-layout clears all bends."""
+    from core.examples import example_paper_network
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window._on_load_example(example_paper_network)
+    qapp.processEvents()
+
+    window.graph_view.set_edge_bends({"P1": 0.3, "P2": -0.2})
+    assert "P1" in window.graph_view.get_edge_bends()
+    assert "P2" in window.graph_view.get_edge_bends()
+
+    # Delete P1
+    window._on_delete_pipe("P1")
+    qapp.processEvents()
+    assert "P1" not in window.graph_view.get_edge_bends()
+    assert "P2" in window.graph_view.get_edge_bends()
+
+    # Re-layout clears all bends
+    window.graph_view.relayout_btn.click()
+    qapp.processEvents()
+    assert window.graph_view.get_edge_bends() == {}
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_bend_handle_visibility_hover_and_selection(qapp):
+    """Test that the bend handle is visible only on hover or selection, and hidden otherwise."""
+    net = Network()
+    net.add_node("junction", id="J1")
+    net.add_node("junction", id="J2")
+    net.add_pipe("J1", "J2", id="P1")
+
+    gv = GraphView()
+    gv.set_positions({"J1": (0.0, 0.0), "J2": (1.0, 0.0)})
+    gv.draw_network(net)
+    gv.resize(800, 600)
+    gv.show()
+    qapp.processEvents()
+    gv.fit_in_view()
+    qapp.processEvents()
+
+    p1 = gv.pipe_items()[0]
+    handle = p1.handle_item
+
+    # Start mouse outside
+    QTest.mouseMove(gv.view.viewport(), QPoint(10, 10))
+    qapp.processEvents()
+    assert not handle.isVisible()
+
+    # Hover
+    body_scene = p1.path.pointAtPercent(0.3)
+    body_vp = gv.view.mapFromScene(body_scene)
+    QTest.mouseMove(gv.view.viewport(), body_vp)
+    qapp.processEvents()
+    assert handle.isVisible()
+
+    # Hover out
+    QTest.mouseMove(gv.view.viewport(), QPoint(10, 10))
+    qapp.processEvents()
+    assert not handle.isVisible()
+
+    # Select
+    p1.setSelected(True)
+    qapp.processEvents()
+    assert handle.isVisible()
+
+    # Deselect
+    p1.setSelected(False)
+    qapp.processEvents()
+    assert not handle.isVisible()
+
+    gv.close()
+
 

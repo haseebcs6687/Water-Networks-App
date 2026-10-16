@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Tuple, Optional, Any, List
 
@@ -14,12 +16,22 @@ CURRENT_VERSION = 2
 SUPPORTED_VERSIONS = {1, 2}
 
 
+@dataclass
+class ProjectData:
+    """Container for fully loaded project data including network, positions, and edge bends."""
+
+    network: Network
+    positions: Dict[str, Tuple[float, float]]
+    edge_bends: Dict[str, float]
+
+
 def save_project(
     path: str | Path,
     network: Network,
-    positions: Optional[Dict[str, Tuple[float, float]]] = None
+    positions: Optional[Dict[str, Tuple[float, float]]] = None,
+    edge_bends: Optional[Dict[str, float]] = None,
 ) -> None:
-    """Save a network and optional canvas node positions to a JSON file.
+    """Save a network and optional canvas node positions and edge bends to a JSON file.
 
     Parameters
     ----------
@@ -29,6 +41,8 @@ def save_project(
         Network instance to serialize.
     positions : dict, optional
         Mapping of node IDs to (x, y) canvas coordinates.
+    edge_bends : dict, optional
+        Mapping of pipe IDs to dimensionless bend ratios.
     """
     path = Path(path)
     data = network.to_dict()
@@ -47,12 +61,21 @@ def save_project(
         "positions": pos_dict,
     }
 
+    if edge_bends:
+        bends_dict = {
+            str(pid): float(val)
+            for pid, val in edge_bends.items()
+            if abs(float(val)) > 1e-6
+        }
+        if bends_dict:
+            payload["edge_bends"] = bends_dict
+
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
 
 
-def load_project(path: str | Path) -> Tuple[Network, Dict[str, Tuple[float, float]]]:
-    """Load a network and node positions from a JSON file.
+def load_project_full(path: str | Path) -> ProjectData:
+    """Load network, node positions, and edge bends from a JSON file.
 
     Parameters
     ----------
@@ -61,8 +84,8 @@ def load_project(path: str | Path) -> Tuple[Network, Dict[str, Tuple[float, floa
 
     Returns
     -------
-    tuple of (Network, dict)
-        Loaded Network instance and node positions mapping.
+    ProjectData
+        Data container with loaded Network instance, node positions, and edge bends.
 
     Raises
     ------
@@ -143,4 +166,41 @@ def load_project(path: str | Path) -> Tuple[Network, Dict[str, Tuple[float, floa
             if nid in node_ids and isinstance(coords, (list, tuple)) and len(coords) == 2:
                 positions[nid] = (float(coords[0]), float(coords[1]))
 
-    return net, positions
+    # Parse edge_bends
+    edge_bends: Dict[str, float] = {}
+    raw_bends = payload.get("edge_bends")
+    if raw_bends is not None:
+        if not isinstance(raw_bends, dict):
+            raise ValueError("Invalid project file: 'edge_bends' must be an object.")
+        for pid, val in raw_bends.items():
+            if not isinstance(val, (int, float)) or isinstance(val, bool) or not math.isfinite(val):
+                raise ValueError(
+                    f"Invalid bend value for pipe {pid!r}: must be a finite number, got {val!r}"
+                )
+            if str(pid) in pipe_ids:
+                edge_bends[str(pid)] = float(val)
+
+    return ProjectData(network=net, positions=positions, edge_bends=edge_bends)
+
+
+def load_project(path: str | Path) -> Tuple[Network, Dict[str, Tuple[float, float]]]:
+    """Load a network and node positions from a JSON file.
+
+    Parameters
+    ----------
+    path : str or Path
+        File path to load (.wnet).
+
+    Returns
+    -------
+    tuple of (Network, dict)
+        Loaded Network instance and node positions mapping.
+
+    Raises
+    ------
+    ValueError
+        If format, version, or structure is invalid or corrupt.
+    """
+    data = load_project_full(path)
+    return data.network, data.positions
+

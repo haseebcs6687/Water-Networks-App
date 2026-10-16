@@ -174,3 +174,102 @@ def test_unsupported_version_rejected(tmp_path):
     with pytest.raises(ValueError, match="Unsupported project file version"):
         load_project(file_path)
 
+
+def test_io_edge_bends_round_trip(tmp_path):
+    from core.io import load_project_full
+
+    net = Network()
+    net.add_node("reservoir", id="R1")
+    net.add_node("junction", id="J1")
+    net.add_pipe("R1", "J1", id="P1")
+
+    pos = {"R1": (0.0, 0.0), "J1": (1.0, 1.0)}
+    bends = {"P1": 0.45}
+
+    # 1. Save with bends
+    file_with = tmp_path / "net_with_bends.wnet"
+    save_project(file_with, net, pos, edge_bends=bends)
+
+    with open(file_with, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    assert "edge_bends" in payload
+    assert payload["edge_bends"] == {"P1": 0.45}
+
+    data = load_project_full(file_with)
+    assert data.edge_bends == {"P1": 0.45}
+    assert data.positions == pos
+
+    # load_project still returns 2-tuple (Network, dict)
+    loaded_net, loaded_pos = load_project(file_with)
+    assert len(loaded_net.nodes) == 2
+    assert loaded_pos == pos
+
+    # 2. Save without bends
+    file_without = tmp_path / "net_without_bends.wnet"
+    save_project(file_without, net, pos, edge_bends=None)
+
+    with open(file_without, "r", encoding="utf-8") as f:
+        payload_no = json.load(f)
+    assert "edge_bends" not in payload_no
+
+    data_no = load_project_full(file_without)
+    assert data_no.edge_bends == {}
+
+
+def test_io_unknown_pipe_id_ignored_in_bends(tmp_path):
+    from core.io import load_project_full
+
+    data = {
+        "format": "water-network",
+        "version": 2,
+        "nodes": [{"id": "J1", "type": "junction"}, {"id": "J2", "type": "junction"}],
+        "pipes": [{"id": "P1", "start": "J1", "end": "J2"}],
+        "edge_bends": {"P1": -0.3, "NON_EXISTENT_PIPE": 0.8},
+    }
+    file_path = tmp_path / "unknown_pipe_bends.wnet"
+    file_path.write_text(json.dumps(data), encoding="utf-8")
+
+    proj = load_project_full(file_path)
+    assert proj.edge_bends == {"P1": -0.3}
+    assert "NON_EXISTENT_PIPE" not in proj.edge_bends
+
+
+def test_io_corrupt_bend_values_raise_value_error(tmp_path):
+    from core.io import load_project_full
+
+    base_data = {
+        "format": "water-network",
+        "version": 2,
+        "nodes": [{"id": "J1", "type": "junction"}, {"id": "J2", "type": "junction"}],
+        "pipes": [{"id": "P1", "start": "J1", "end": "J2"}],
+    }
+
+    # Non-dict edge_bends
+    f1 = tmp_path / "corrupt_bends_list.wnet"
+    d1 = dict(base_data, edge_bends=[0.2])
+    f1.write_text(json.dumps(d1), encoding="utf-8")
+    with pytest.raises(ValueError, match="'edge_bends' must be an object"):
+        load_project_full(f1)
+
+    # String bend value
+    f2 = tmp_path / "corrupt_bends_str.wnet"
+    d2 = dict(base_data, edge_bends={"P1": "invalid_number"})
+    f2.write_text(json.dumps(d2), encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a finite number"):
+        load_project_full(f2)
+
+    # Boolean bend value
+    f3 = tmp_path / "corrupt_bends_bool.wnet"
+    d3 = dict(base_data, edge_bends={"P1": True})
+    f3.write_text(json.dumps(d3), encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a finite number"):
+        load_project_full(f3)
+
+    # NaN / Inf bend value
+    f4 = tmp_path / "corrupt_bends_nan.json"
+    # Using raw string because json.dumps produces non-standard NaN/Infinity
+    f4.write_text('{"format": "water-network", "version": 2, "nodes": [{"id": "J1", "type": "junction"}, {"id": "J2", "type": "junction"}], "pipes": [{"id": "P1", "start": "J1", "end": "J2"}], "edge_bends": {"P1": NaN}}', encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a finite number"):
+        load_project_full(f4)
+
+

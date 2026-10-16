@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 
 from core.models import Network
 from core.matrices import build_matrices
-from core.io import save_project, load_project
+from core.io import save_project, load_project, load_project_full
 from core.examples import example_paper_network, example_broken_network
 
 from ui.build_panel import BuildPanel
@@ -106,6 +106,7 @@ class MainWindow(QMainWindow):
 
         self.checks_view.warning_double_clicked.connect(self._on_warning_double_clicked)
         self.graph_view.positions_changed.connect(self._on_positions_changed)
+        self.graph_view.edge_bends_changed.connect(self._mark_edited)
         self.graph_view.node_clicked.connect(self._on_graph_node_clicked)
         self.graph_view.pipe_clicked.connect(self._on_graph_pipe_clicked)
         self.graph_view.background_clicked.connect(self._on_graph_background_clicked)
@@ -162,9 +163,10 @@ class MainWindow(QMainWindow):
 
     def load_file(self, path: Path) -> None:
         path = Path(path)
-        loaded_net, pos = load_project(path)
-        self.network = loaded_net
-        self.graph_view.set_positions(pos)
+        loaded = load_project_full(path)
+        self.network = loaded.network
+        self.graph_view.set_positions(loaded.positions)
+        self.graph_view.set_edge_bends(loaded.edge_bends)
         self._current_filepath = path
         self._last_dir = path.parent
         self.refresh()
@@ -176,6 +178,7 @@ class MainWindow(QMainWindow):
             return
         self.network.clear()
         self.graph_view.set_positions({})
+        self.graph_view.set_edge_bends({})
         self._current_filepath = None
         self.refresh()
         self.setWindowModified(False)
@@ -197,7 +200,12 @@ class MainWindow(QMainWindow):
         if self._current_filepath is None:
             return self._on_save_as()
         try:
-            save_project(self._current_filepath, self.network, self.graph_view.get_positions())
+            save_project(
+                self._current_filepath,
+                self.network,
+                self.graph_view.get_positions(),
+                self.graph_view.get_edge_bends(),
+            )
             self.setWindowModified(False)
             self._update_window_title()
             return True
@@ -221,6 +229,7 @@ class MainWindow(QMainWindow):
             return
         self.network = example_factory()
         self.graph_view.set_positions({})
+        self.graph_view.set_edge_bends({})
         self._current_filepath = None
         self.refresh()
         self.setWindowModified(False)
@@ -259,6 +268,10 @@ class MainWindow(QMainWindow):
     def _on_delete_node(self, node_id: str):
         try:
             self.network.remove_node(node_id)
+            remaining_pids = {p.id for p in self.network.pipes}
+            for pid in list(self.graph_view._edge_bends.keys()):
+                if pid not in remaining_pids:
+                    self.graph_view._edge_bends.pop(pid, None)
             self._mark_edited()
         except Exception as e:
             self._handle_error("Failed to delete node", e)
@@ -266,6 +279,7 @@ class MainWindow(QMainWindow):
     def _on_delete_pipe(self, pipe_id: str):
         try:
             self.network.remove_pipe(pipe_id)
+            self.graph_view._edge_bends.pop(pipe_id, None)
             self._mark_edited()
         except Exception as e:
             self._handle_error("Failed to delete pipe", e)

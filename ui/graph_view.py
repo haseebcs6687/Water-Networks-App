@@ -158,8 +158,75 @@ class NodeItem(QGraphicsItem):
         )
 
 
+class BendHandleItem(QGraphicsItem):
+    """Small round cosmetic handle at the curve midpoint for bending pipes."""
+
+    def __init__(self, pipe_item: "PipeItem", parent=None):
+        super().__init__(parent or pipe_item)
+        self.pipe_item = pipe_item
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        self.setZValue(25)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.SizeAllCursor)
+        self.radius = 4.0  # 8 px cosmetic diameter
+        self.setVisible(False)
+        self._dragging = False
+        self._initial_bend: float = 0.0
+
+    def boundingRect(self) -> QRectF:
+        r = self.radius + 3.0
+        return QRectF(-r, -r, 2.0 * r, 2.0 * r)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QBrush(QColor("#0078D7")))
+        painter.setPen(QPen(QColor("white"), 1.5))
+        painter.drawEllipse(QPointF(0, 0), self.radius, self.radius)
+
+    def hoverEnterEvent(self, event):
+        self.pipe_item._is_hovered = True
+        self.setVisible(True)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        super().hoverLeaveEvent(event)
+        if not self.pipe_item._selected and not self.pipe_item.isUnderMouse():
+            self.pipe_item._is_hovered = False
+            self.setVisible(False)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            event.accept()
+            self._dragging = True
+            self._initial_bend = self.pipe_item.bend_ratio
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            event.accept()
+            self.pipe_item.handle_drag_to(event.scenePos())
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._dragging:
+            event.accept()
+            self._dragging = False
+            self.pipe_item.handle_drag_finished(self._initial_bend)
+        else:
+            super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            event.accept()
+            self.pipe_item.reset_bend()
+        else:
+            super().mouseDoubleClickEvent(event)
+
+
 class PipeItem(QGraphicsItem):
-    """Directed pipe item stopping at node boundaries with arrow and mid-curve label."""
+    """Directed pipe item stopping at node boundaries with arrow, curve, and live bend handle."""
 
     def __init__(
         self,
@@ -171,6 +238,7 @@ class PipeItem(QGraphicsItem):
         has_pump: bool = False,
         label_text: str = "",
         curvature: float = 0.0,
+        bend_ratio: float = 0.0,
         graph_view: Optional["GraphView"] = None,
         parent=None,
     ):
@@ -182,13 +250,24 @@ class PipeItem(QGraphicsItem):
         self.end_pos = end_pos
         self.has_pump = has_pump
         self.label_text = label_text or pipe_id
-        self.curvature = curvature
+        self.auto_curvature = curvature
+        self.bend_ratio = bend_ratio
+        self.curvature = self.auto_curvature + self.bend_ratio
         self._graph_view = graph_view
         self.setZValue(5)
 
         self._highlighted = False
         self._selected = False
+        self._is_hovered = False
+        self.setAcceptHoverEvents(True)
 
+        self._label_box = QRectF()
+        self._label_dragging = False
+        self._pipe_pressed = False
+        self._pipe_press_scene = QPointF()
+        self._initial_drag_bend = 0.0
+
+        self.handle_item = BendHandleItem(self)
         self._build_geometry()
 
     def set_start_pos(self, pos: QPointF):
@@ -211,21 +290,23 @@ class PipeItem(QGraphicsItem):
         length = math.hypot(dx, dy)
         if length < 1e-4:
             ux, uy = 1.0, 0.0
-            nx, ny = 0.0, 1.0
         else:
             ux, uy = dx / length, dy / length
-            nx, ny = -uy, ux
+        # Left normal in screen view (positive curvature is left of travel direction)
+        nx_left, ny_left = uy, -ux
 
-        # Midpoint and control point for quadratic Bezier
+        # Chord midpoint
         mx = (p1.x() + p2.x()) / 2.0
         my = (p1.y() + p2.y()) / 2.0
 
+        self.curvature = self.auto_curvature + self.bend_ratio
         if abs(self.curvature) < 1e-4:
             qx, qy = mx, my
         else:
-            offset = self.curvature * length * 0.5
-            qx = mx + nx * offset
-            qy = my + ny * offset
+            # For quadratic Bezier, curve midpoint offset = 0.5 * (Q - M).
+            # Thus Q - M = 2.0 * offset = 2.0 * curvature * length * n_left.
+            qx = mx + 2.0 * self.curvature * length * nx_left
+            qy = my + 2.0 * self.curvature * length * ny_left
 
         # Start point at start node boundary
         v1x, v1y = qx - p1.x(), qy - p1.y()
@@ -251,7 +332,7 @@ class PipeItem(QGraphicsItem):
         else:
             self.path.quadTo(ctrl_pt, end_pt)
 
-        # Arrowhead at end_pt
+        # Arrowhead at end_pt pointing along tangent from ctrl_pt
         tx = end_pt.x() - ctrl_pt.x()
         ty = end_pt.y() - ctrl_pt.y()
         tlen = math.hypot(tx, ty)
@@ -274,14 +355,37 @@ class PipeItem(QGraphicsItem):
         )
         self.arrow_poly = QPolygonF([tip, left_barb, right_barb])
 
-        # Curve midpoint for label box
-        mid_t = 0.5
-        if abs(self.curvature) < 1e-4:
-            self.label_pos = QPointF((start_pt.x() + end_pt.x()) / 2.0, (start_pt.y() + end_pt.y()) / 2.0)
-        else:
-            mid_x = (1 - mid_t)**2 * start_pt.x() + 2 * (1 - mid_t) * mid_t * qx + mid_t**2 * end_pt.x()
-            mid_y = (1 - mid_t)**2 * start_pt.y() + 2 * (1 - mid_t) * mid_t * qy + mid_t**2 * end_pt.y()
-            self.label_pos = QPointF(mid_x, mid_y)
+        # Exact midpoint on the quadratic Bezier curve
+        mid_x = 0.25 * start_pt.x() + 0.5 * qx + 0.25 * end_pt.x()
+        mid_y = 0.25 * start_pt.y() + 0.5 * qy + 0.25 * end_pt.y()
+        self.curve_midpoint = QPointF(mid_x, mid_y)
+        self.label_pos = self.curve_midpoint
+
+        if hasattr(self, "handle_item") and self.handle_item:
+            self.handle_item.setPos(self.curve_midpoint)
+
+        # Precompute label bounding box
+        font = QFont("Segoe UI", 8)
+        fm = QFontMetrics(font)
+        tw = fm.horizontalAdvance(self.label_text)
+        th = fm.height()
+        self._label_box = QRectF(
+            self.label_pos.x() - tw / 2.0 - 4,
+            self.label_pos.y() - th / 2.0 - 2,
+            tw + 8,
+            th + 4,
+        )
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self.handle_item.setVisible(True)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        super().hoverLeaveEvent(event)
+        self._is_hovered = False
+        if not self._selected and not self.handle_item.isUnderMouse():
+            self.handle_item.setVisible(False)
 
     def set_highlighted(self, val: bool):
         if self._highlighted != val:
@@ -291,11 +395,82 @@ class PipeItem(QGraphicsItem):
     def set_selected(self, val: bool):
         if self._selected != val:
             self._selected = val
+            super().setSelected(val)
+            self.handle_item.setVisible(self._selected or self._is_hovered)
             self.update()
+
+    def setSelected(self, val: bool):
+        self.set_selected(val)
+
+    def isSelected(self) -> bool:
+        return self._selected
+
+    def handle_drag_to(self, scene_pos: QPointF):
+        p1 = self.start_pos
+        p2 = self.end_pos
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        length = math.hypot(dx, dy)
+        if length < 1e-4:
+            return
+
+        ux, uy = dx / length, dy / length
+        nx_left, ny_left = uy, -ux
+
+        mx = (p1.x() + p2.x()) / 2.0
+        my = (p1.y() + p2.y()) / 2.0
+
+        vx = scene_pos.x() - mx
+        vy = scene_pos.y() - my
+
+        perp_offset = vx * nx_left + vy * ny_left
+        total_curvature = perp_offset / length
+
+        raw_bend = total_curvature - self.auto_curvature
+        clamped_bend = max(-1.5, min(1.5, raw_bend))
+        if abs(clamped_bend) < 1e-4:
+            clamped_bend = 0.0
+
+        self.bend_ratio = clamped_bend
+        self.curvature = self.auto_curvature + self.bend_ratio
+
+        self.prepareGeometryChange()
+        self._build_geometry()
+        self.update()
+
+        if self._graph_view:
+            self._graph_view._on_pipe_bend_updated(self.pipe_id, self.bend_ratio)
+
+    def handle_drag_finished(self, initial_bend: float):
+        if abs(self.bend_ratio - initial_bend) > 1e-4:
+            if self._graph_view:
+                self._graph_view._on_pipe_bend_finished(self.pipe_id)
+
+    def reset_bend(self):
+        old_bend = self.bend_ratio
+        self.bend_ratio = 0.0
+        self.curvature = self.auto_curvature
+        self.prepareGeometryChange()
+        self._build_geometry()
+        self.update()
+        if self._graph_view:
+            self._graph_view._on_pipe_bend_updated(self.pipe_id, 0.0)
+            if abs(old_bend) > 1e-4:
+                self._graph_view._on_pipe_bend_finished(self.pipe_id)
+
+    def set_bend_ratio(self, val: float):
+        self.bend_ratio = max(-1.5, min(1.5, float(val)))
+        if abs(self.bend_ratio) < 1e-4:
+            self.bend_ratio = 0.0
+        self.curvature = self.auto_curvature + self.bend_ratio
+        self.prepareGeometryChange()
+        self._build_geometry()
+        self.update()
 
     def boundingRect(self) -> QRectF:
         rect = self.path.boundingRect()
         rect = rect.united(self.arrow_poly.boundingRect())
+        rect = rect.united(self._label_box)
         return rect.adjusted(-30, -30, 30, 30)
 
     def shape(self) -> QPainterPath:
@@ -303,13 +478,48 @@ class PipeItem(QGraphicsItem):
         stroker.setWidth(14.0)
         p = stroker.createStroke(self.path)
         p.addPolygon(self.arrow_poly)
+        p.addRect(self._label_box)
         return p
 
     def mousePressEvent(self, event):
-        event.accept()
-        if self._graph_view:
-            self._graph_view._on_pipe_clicked(self.pipe_id)
+        if event.button() == Qt.LeftButton:
+            if hasattr(self, "_label_box") and self._label_box.contains(event.pos()):
+                event.accept()
+                self._label_dragging = True
+                self._initial_drag_bend = self.bend_ratio
+                return
+            else:
+                event.accept()
+                self._pipe_pressed = True
+                self._pipe_press_scene = event.scenePos()
+                return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._label_dragging:
+            event.accept()
+            self.handle_drag_to(event.scenePos())
+            return
+        elif self._pipe_pressed:
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self._label_dragging:
+                event.accept()
+                self._label_dragging = False
+                self.handle_drag_finished(self._initial_drag_bend)
+                return
+            elif self._pipe_pressed:
+                event.accept()
+                self._pipe_pressed = False
+                if (event.scenePos() - self._pipe_press_scene).manhattanLength() < 5.0:
+                    if self._graph_view:
+                        self._graph_view._on_pipe_clicked(self.pipe_id)
+                return
+        super().mouseReleaseEvent(event)
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing)
@@ -347,22 +557,13 @@ class PipeItem(QGraphicsItem):
         # 3. Label with white rounded background
         font = QFont("Segoe UI", 8)
         painter.setFont(font)
-        fm = QFontMetrics(font)
-        tw = fm.horizontalAdvance(self.label_text)
-        th = fm.height()
 
-        box = QRectF(
-            self.label_pos.x() - tw / 2.0 - 4,
-            self.label_pos.y() - th / 2.0 - 2,
-            tw + 8,
-            th + 4
-        )
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(QColor(255, 255, 255, 230)))
-        painter.drawRoundedRect(box, 3, 3)
+        painter.drawRoundedRect(self._label_box, 3, 3)
 
         painter.setPen(color)
-        painter.drawText(box, Qt.AlignCenter, self.label_text)
+        painter.drawText(self._label_box, Qt.AlignCenter, self.label_text)
 
 
 class LegendItem(QGraphicsItem):
@@ -423,6 +624,8 @@ class NetworkGraphicsView(QGraphicsView):
     def __init__(self, scene: QGraphicsScene, graph_view: "GraphView", parent=None):
         super().__init__(scene, parent)
         self._graph_view = graph_view
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
         self.setRenderHints(
             QPainter.Antialiasing | QPainter.TextAntialiasing | QPainter.SmoothPixmapTransform
         )
@@ -483,6 +686,7 @@ class GraphView(QWidget):
     """Widget displaying the directed water network graph using QGraphicsScene/View."""
 
     positions_changed = Signal()
+    edge_bends_changed = Signal()
     node_clicked = Signal(str)
     pipe_clicked = Signal(str)
     background_clicked = Signal()
@@ -490,6 +694,7 @@ class GraphView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pos: Dict[str, Tuple[float, float]] = {}
+        self._edge_bends: Dict[str, float] = {}
         self._highlight_ids: Set[str] = set()
         self._selected_node_id: Optional[str] = None
         self._selected_pipe_id: Optional[str] = None
@@ -571,6 +776,7 @@ class GraphView(QWidget):
 
     def _on_relayout(self):
         self._pos.clear()
+        self._edge_bends.clear()
         self._pending_fit = True
         if self._current_network:
             self.draw_network(self._current_network)
@@ -592,6 +798,18 @@ class GraphView(QWidget):
         self._pending_fit = True
         if pos and self._current_network:
             self.draw_network(self._current_network)
+
+    def get_edge_bends(self) -> Dict[str, float]:
+        """Return mapping of pipe IDs to dimensionless bend ratios, omitting zeros."""
+        return {pid: round(b, 6) for pid, b in self._edge_bends.items() if abs(b) > 1e-6}
+
+    def set_edge_bends(self, bends: Optional[Dict[str, float]]) -> None:
+        """Set edge bends silently without emitting signals."""
+        self._edge_bends = {
+            str(pid): float(val) for pid, val in bends.items() if abs(float(val)) > 1e-6
+        } if bends else {}
+        for p in self.pipe_items():
+            p.set_bend_ratio(self._edge_bends.get(p.pipe_id, 0.0))
 
     def highlight(self, ids: List[str]) -> None:
         """Highlight specified node/pipe IDs with a red outline / thick red line."""
@@ -650,6 +868,17 @@ class GraphView(QWidget):
         """Called once on mouse release after a real node drag."""
         self.positions_changed.emit()
 
+    def _on_pipe_bend_updated(self, pipe_id: str, bend: float):
+        """Called live while a pipe is being bent."""
+        if abs(bend) > 1e-6:
+            self._edge_bends[pipe_id] = bend
+        else:
+            self._edge_bends.pop(pipe_id, None)
+
+    def _on_pipe_bend_finished(self, pipe_id: str):
+        """Called once on mouse release after a real pipe bend change."""
+        self.edge_bends_changed.emit()
+
     def _on_node_clicked(self, node_id: str):
         """Called on a plain click on a node."""
         self.node_clicked.emit(node_id)
@@ -681,13 +910,20 @@ class GraphView(QWidget):
 
     def fit_in_view(self, pad_px: float = 45.0):
         """Fit all graph elements nicely in the viewport with pad_px margin."""
-        items = [it for it in self.scene.items() if isinstance(it, (NodeItem, PipeItem))]
-        if not items:
+        nodes = [it for it in self.scene.items() if isinstance(it, NodeItem)]
+        all_items = [it for it in self.scene.items() if isinstance(it, (NodeItem, PipeItem))]
+        if not nodes or not all_items:
             return
-        rect = items[0].sceneBoundingRect()
-        for it in items[1:]:
-            rect = rect.united(it.sceneBoundingRect())
-        if rect.isEmpty():
+
+        nodes_rect = nodes[0].sceneBoundingRect()
+        for it in nodes[1:]:
+            nodes_rect = nodes_rect.united(it.sceneBoundingRect())
+
+        all_rect = all_items[0].sceneBoundingRect()
+        for it in all_items[1:]:
+            all_rect = all_rect.united(it.sceneBoundingRect())
+
+        if nodes_rect.isEmpty() or all_rect.isEmpty():
             return
 
         vp = self.view.viewport()
@@ -697,14 +933,27 @@ class GraphView(QWidget):
 
         usable_w = max(10.0, float(vw) - 2.0 * pad_px)
         usable_h = max(10.0, float(vh) - 2.0 * pad_px)
-        scale = min(usable_w / rect.width(), usable_h / rect.height())
+
+        nc = nodes_rect.center()
+        dx_left = nc.x() - all_rect.left()
+        dx_right = all_rect.right() - nc.x()
+        max_half_w = max(dx_left, dx_right, nodes_rect.width() / 2.0, 1.0)
+
+        dy_top = nc.y() - all_rect.top()
+        dy_bottom = all_rect.bottom() - nc.y()
+        max_half_h = max(dy_top, dy_bottom, nodes_rect.height() / 2.0, 1.0)
+
+        scale = min(usable_w / (2.0 * max_half_w), usable_h / (2.0 * max_half_h))
 
         pad_scene = pad_px / scale
-        self.scene.setSceneRect(rect.adjusted(-pad_scene, -pad_scene, pad_scene, pad_scene))
+        scene_w = 2.0 * (max_half_w + pad_scene)
+        scene_h = 2.0 * (max_half_h + pad_scene)
+        scene_rect = QRectF(nc.x() - max_half_w - pad_scene, nc.y() - max_half_h - pad_scene, scene_w, scene_h)
+        self.scene.setSceneRect(scene_rect)
 
         self.view.resetTransform()
         self.view.scale(scale, scale)
-        self.view.centerOn(rect.center())
+        self.view.centerOn(nc)
         self.update_legend_position()
 
     def render_to_image(self, scale: float = 2.0, margin: float = 24.0) -> QImage:
@@ -833,6 +1082,12 @@ class GraphView(QWidget):
             sx, sy = model_to_scene(mx, my)
             scene_node_positions[nid] = QPointF(sx, sy)
 
+        # Prune removed pipe bends
+        current_pipe_ids = {p.id for p in network.pipes}
+        for pid in list(self._edge_bends.keys()):
+            if pid not in current_pipe_ids:
+                del self._edge_bends[pid]
+
         # Draw pipes/edges
         if network.pipes:
             pipe_dict = {p.id: p for p in network.pipes}
@@ -858,6 +1113,8 @@ class GraphView(QWidget):
                         rad = -rad
 
                 p_obj = pipe_dict.get(data["id"])
+                p_bend = self._edge_bends.get(data["id"], 0.0)
+
                 p_item = PipeItem(
                     pipe_id=data["id"],
                     start_node_id=u,
@@ -867,6 +1124,7 @@ class GraphView(QWidget):
                     has_pump=data.get("has_pump", False),
                     label_text=data.get("label", data["id"]),
                     curvature=rad,
+                    bend_ratio=p_bend,
                     graph_view=self,
                 )
 
