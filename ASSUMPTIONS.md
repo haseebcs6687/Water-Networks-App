@@ -187,5 +187,22 @@ after `from_dict` round-trips.
 - **Edge Geometry & Curvature Separation**: Pipes stop cleanly at the node circular boundary rather than intersecting node centers. Parallel edges between identical endpoints are separated via quadratic Bezier curves with opposing lateral curvature offsets ($\pm 0.25$) to prevent visual overlap.
 - **Fixed-Size Legend & Overlay Elements**: Node type legend is implemented with `QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations` and pinned to the viewport top-right so it remains readable and stationary under zoom and pan operations.
 - **Zoom & Pan Stability**: Viewport transformations persist across property edits and network refreshes; automatic recentering is triggered only on project load or explicit user click on the "Fit" button.
+- **Fit Quality & Margins**: Dynamic fit calculates usable viewport bounds excluding explicit margins (minimum 20 px padding from any viewport edge) and sets scene bounds tightly aligned with network contents to prevent center drift caused by untransformed UI overlays (such as the legend).
+
+---
+
+## 13. Interactive Node Dragging, Selection Sync, and Visual Styling
+
+- **Dragging Marks Project Modified**: When a node is dragged with the mouse, `GraphView.positions_changed` is emitted once upon mouse release if and only if a real translation occurred. MainWindow connects this signal to mark the project modified (displaying window title asterisk and triggering the save prompt on close/new). Programmatic positioning (such as loading a file or example) does not mark the project modified.
+- **Re-layout Discards Custom Positions**: Clicking "Re-layout" recalculates automatic spring layout coordinates for all nodes and marks the project modified.
+- **Live Pipe Following & Curvature Preservation**: While dragging a node, attached pipes, arrowheads, and labels update live at 60 FPS using an adjacency map (`_node_pipes`). Parallel pipes maintain their opposing curvature offsets throughout dragging.
+- **Live Internal Position Sync**: The internal `_pos` dictionary in model coordinates is kept in sync during dragging, ensuring that background refreshes (such as editing pipe parameters in Properties) never reset or discard dragged coordinates.
+- **Selection Visual Distinction & Dual Styling**:
+  - Blue selection ring / thicker stroke (`#0078D7`, 3.5–4.0 px) indicates the active element selected in the table or canvas.
+  - Red outline (`#FF0000`, 3.0–3.5 px) indicates warnings highlighted by the Checks tab.
+  - When an element is simultaneously selected and highlighted, dual concentric rings (outer blue ring at radius 24, inner red ring at radius 20) or stacked strokes ensure both states are independently distinguishable.
+- **Empty Canvas Click Clears Selection**: Clicking empty canvas background clears both table selection and graph selection without modifying the network. Panning the view does not clear selection.
+- **Tooltip Formatting & Metric Units**: Hover tooltips show physical quantities in standard metric units (`m` for length/elevation/head/diameter/roughness, `kW` for pump power) and explicitly display `"not set"` for `None` values. Reservoir total head is displayed only for reservoirs.
+
 
 

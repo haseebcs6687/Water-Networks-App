@@ -40,6 +40,9 @@ class BuildPanel(QWidget):
     node_updated = Signal(str, dict)  # node_id, fields_dict
     pipe_updated = Signal(str, dict)  # pipe_id, fields_dict
     cleared = Signal()
+    node_selected = Signal(str)  # node_id
+    pipe_selected = Signal(str)  # pipe_id
+    selection_cleared = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -344,10 +347,12 @@ class BuildPanel(QWidget):
                     if node:
                         self._populate_node_properties(node)
                         self.props_stack.setCurrentWidget(self.props_node_widget)
+                        self.node_selected.emit(node_id)
                         return
         self._selected_node_id = None
         if not self._selected_pipe_id:
             self.props_stack.setCurrentWidget(self.props_hint_widget)
+            self.selection_cleared.emit()
 
     def _on_pipe_selection_changed(self):
         if self._updating_selection:
@@ -366,10 +371,83 @@ class BuildPanel(QWidget):
                     if pipe:
                         self._populate_pipe_properties(pipe)
                         self.props_stack.setCurrentWidget(self.props_pipe_widget)
+                        self.pipe_selected.emit(pipe_id)
                         return
         self._selected_pipe_id = None
         if not self._selected_node_id:
             self.props_stack.setCurrentWidget(self.props_hint_widget)
+            self.selection_cleared.emit()
+
+    def select_node(self, node_id: str):
+        """Programmatically select a node row in the nodes table and display its properties."""
+        self._updating_selection = True
+        try:
+            self.pipes_table.clearSelection()
+            self._selected_pipe_id = None
+            found_row = -1
+            for r in range(self.nodes_table.rowCount()):
+                it = self.nodes_table.item(r, 0)
+                if it and it.text() == node_id:
+                    found_row = r
+                    break
+            if found_row >= 0:
+                self.nodes_table.selectRow(found_row)
+                self._selected_node_id = node_id
+                if self._current_network:
+                    node = next((n for n in self._current_network.nodes if n.id == node_id), None)
+                    if node:
+                        self._populate_node_properties(node)
+                        self.props_stack.setCurrentWidget(self.props_node_widget)
+                self.node_selected.emit(node_id)
+            else:
+                self.nodes_table.clearSelection()
+                self._selected_node_id = None
+                self.props_stack.setCurrentWidget(self.props_hint_widget)
+                self.selection_cleared.emit()
+        finally:
+            self._updating_selection = False
+
+    def select_pipe(self, pipe_id: str):
+        """Programmatically select a pipe row in the pipes table and display its properties."""
+        self._updating_selection = True
+        try:
+            self.nodes_table.clearSelection()
+            self._selected_node_id = None
+            found_row = -1
+            for r in range(self.pipes_table.rowCount()):
+                it = self.pipes_table.item(r, 0)
+                if it and it.text() == pipe_id:
+                    found_row = r
+                    break
+            if found_row >= 0:
+                self.pipes_table.selectRow(found_row)
+                self._selected_pipe_id = pipe_id
+                if self._current_network:
+                    pipe = next((p for p in self._current_network.pipes if p.id == pipe_id), None)
+                    if pipe:
+                        self._populate_pipe_properties(pipe)
+                        self.props_stack.setCurrentWidget(self.props_pipe_widget)
+                self.pipe_selected.emit(pipe_id)
+            else:
+                self.pipes_table.clearSelection()
+                self._selected_pipe_id = None
+                self.props_stack.setCurrentWidget(self.props_hint_widget)
+                self.selection_cleared.emit()
+        finally:
+            self._updating_selection = False
+
+    def clear_selection(self):
+        """Clear all table selections and reset properties panel to hint."""
+        self._updating_selection = True
+        try:
+            self.nodes_table.clearSelection()
+            self.pipes_table.clearSelection()
+            self._selected_node_id = None
+            self._selected_pipe_id = None
+            self.props_stack.setCurrentWidget(self.props_hint_widget)
+            self.selection_cleared.emit()
+        finally:
+            self._updating_selection = False
 
     def _populate_node_properties(self, node):
         self.prop_node_id_lbl.setText(node.id)

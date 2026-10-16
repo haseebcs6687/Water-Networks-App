@@ -1,4 +1,4 @@
-﻿"""UI smoke test using Qt offscreen platform."""
+"""UI smoke test using Qt offscreen platform."""
 
 import os
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -67,11 +67,11 @@ def test_ui_smoke_nodes_without_pipes(qapp):
 
     window.graph_view.draw_network(window.network)
 
-    # Verify node labels are drawn on axes and placeholder text is absent
-    node_labels = [t.get_text() for t in window.graph_view.ax.texts]
+    # Verify node labels are drawn on scene and placeholder text is absent
+    node_labels = [n.node_id for n in window.graph_view.node_items()]
     assert "R1" in node_labels
     assert "J1" in node_labels
-    assert not any("Add nodes" in txt for txt in node_labels)
+    assert not any("Add nodes" in n.node_id for n in window.graph_view.node_items())
 
 
 def test_ui_smoke_examples_checks_and_incidence(qapp, tmp_path):

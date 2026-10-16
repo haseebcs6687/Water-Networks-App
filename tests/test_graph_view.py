@@ -4,7 +4,8 @@ import os
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 import pytest
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt, QPoint, QPointF
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from core.models import Network
@@ -21,6 +22,16 @@ def qapp():
     if app is None:
         app = QApplication([])
     return app
+
+
+@pytest.fixture(autouse=True)
+def _patch_dialogs(monkeypatch):
+    from PySide6.QtWidgets import QMessageBox, QFileDialog
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: QMessageBox.Ok)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: QMessageBox.Ok)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: QMessageBox.Ok)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Discard)
+
 
 
 def test_coordinate_helpers_and_v1_positions(qapp):
@@ -289,3 +300,496 @@ def test_cropped_image_export_and_legend_non_overlap(qapp, tmp_path):
     ok = view.export_image(out_file)
     assert ok is True
     assert out_file.exists() and out_file.stat().st_size > 0
+
+
+def test_regression_stale_positions_on_example_and_new(qapp):
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    qapp.processEvents()
+
+    # 1. Load paper example (positions exist)
+    window._on_load_example(example_paper_network)
+    paper_pos = window.graph_view.get_positions()
+    assert len(paper_pos) == 6
+    assert "J1" in paper_pos
+
+    # 2. Load broken example through the exact same code path the menu uses
+    window._on_load_example(example_broken_network)
+    broken_pos = window.graph_view.get_positions()
+    assert len(broken_pos) == 6
+
+    # Assert no coordinate of paper network was kept for broken network
+    for nid, coord in paper_pos.items():
+        if nid in broken_pos:
+            assert tuple(coord) != tuple(broken_pos[nid])
+
+    # Assert all nodes of broken network are inside viewport after fit
+    vp_rect = window.graph_view.view.viewport().rect()
+    for item in window.graph_view.node_items():
+        vp_poly = window.graph_view.view.mapFromScene(item.sceneBoundingRect())
+        r = vp_poly.boundingRect()
+        assert r.left() >= 0
+        assert r.right() <= vp_rect.width()
+        assert r.top() >= 0
+        assert r.bottom() <= vp_rect.height()
+
+    # 3. File > New followed by adding nodes
+    window._on_new()
+    assert len(window.graph_view.get_positions()) == 0
+
+    window._on_add_node("reservoir")
+    window._on_add_node("junction")
+    window.graph_view.fit_in_view()
+    qapp.processEvents()
+    new_pos = window.graph_view.get_positions()
+    assert len(new_pos) == 2
+    for item in window.graph_view.node_items():
+        vp_poly = window.graph_view.view.mapFromScene(item.sceneBoundingRect())
+        r = vp_poly.boundingRect()
+        assert r.left() >= 0
+        assert r.right() <= vp_rect.width()
+        assert r.top() >= 0
+        assert r.bottom() <= vp_rect.height()
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_fit_quality_all_scenarios(qapp):
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    qapp.processEvents()
+
+    scenarios = [
+        ("Direct paper", lambda: window._on_load_example(example_paper_network)),
+        ("Direct broken", lambda: window._on_load_example(example_broken_network)),
+        ("3-node network", lambda: (
+            window._on_new(),
+            window._on_add_node("reservoir"),
+            window._on_add_node("junction"),
+            window._on_add_node("junction"),
+            window._on_add_pipe("R1", "J1", False, 0.0),
+            window._on_add_pipe("J1", "J2", False, 0.0),
+        )),
+        ("Tab switch scenario", lambda: (
+            window.right_tabs.setCurrentIndex(1),
+            window._on_load_example(example_paper_network),
+            window.right_tabs.setCurrentIndex(0),
+        )),
+    ]
+
+    for name, action in scenarios:
+        action()
+        qapp.processEvents()
+        window.graph_view.fit_in_view()
+        qapp.processEvents()
+
+        view = window.graph_view.view
+        vp_rect = view.viewport().rect()
+        vw, vh = vp_rect.width(), vp_rect.height()
+        vp_cx, vp_cy = vw / 2.0, vh / 2.0
+
+        node_items = window.graph_view.node_items()
+        assert len(node_items) > 0, f"No nodes in scenario {name}"
+
+        # Check node margins >= 20px
+        min_x = min(view.mapFromScene(n.sceneBoundingRect()).boundingRect().left() for n in node_items)
+        max_x = max(view.mapFromScene(n.sceneBoundingRect()).boundingRect().right() for n in node_items)
+        min_y = min(view.mapFromScene(n.sceneBoundingRect()).boundingRect().top() for n in node_items)
+        max_y = max(view.mapFromScene(n.sceneBoundingRect()).boundingRect().bottom() for n in node_items)
+
+        margin_left = min_x
+        margin_right = vw - max_x
+        margin_top = min_y
+        margin_bottom = vh - max_y
+
+        min_margin = min(margin_left, margin_right, margin_top, margin_bottom)
+        assert min_margin >= 20.0, f"Scenario {name} min_margin {min_margin:.1f} < 20px"
+
+        # Content center within 10px of viewport center
+        content_cx = (min_x + max_x) / 2.0
+        content_cy = (min_y + max_y) / 2.0
+        diff_x = abs(content_cx - vp_cx)
+        diff_y = abs(content_cy - vp_cy)
+        assert diff_x <= 10.0, f"Scenario {name} center diff_x {diff_x:.1f} > 10px"
+        assert diff_y <= 10.0, f"Scenario {name} center diff_y {diff_y:.1f} > 10px"
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_drag_node_live_pipe_update_and_positions(qapp):
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window._on_load_example(example_paper_network)
+    qapp.processEvents()
+
+    gv = window.graph_view
+    view = gv.view
+    vp = view.viewport()
+
+    j1_item = next(n for n in gv.node_items() if n.node_id == "J1")
+    other_items = [n for n in gv.node_items() if n.node_id != "J1"]
+    other_initial_positions = {n.node_id: QPointF(n.pos()) for n in other_items}
+
+    initial_pos_dict = gv.get_positions()
+    init_j1_model = initial_pos_dict["J1"]
+    init_j1_scene = QPointF(j1_item.pos())
+
+    # Attached pipes
+    attached_pipes = [p for p in gv.pipe_items() if p.start_node_id == "J1" or p.end_node_id == "J1"]
+    assert len(attached_pipes) >= 2
+
+    # Track signals
+    pos_changed_count = 0
+    def _on_pos_changed():
+        nonlocal pos_changed_count
+        pos_changed_count += 1
+    gv.positions_changed.connect(_on_pos_changed)
+
+    # Map scene pos to viewport coordinates
+    start_pt = view.mapFromScene(init_j1_scene)
+    # Drag by +60px right, -45px up in viewport coordinates
+    drag_dx_px, drag_dy_px = 60, -45
+    end_pt = start_pt + QPoint(drag_dx_px, drag_dy_px)
+
+    # Perform real QTest mouse drag
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, start_pt)
+    qapp.processEvents()
+
+    # Move halfway
+    mid_pt = start_pt + QPoint(drag_dx_px // 2, drag_dy_px // 2)
+    QTest.mouseMove(vp, mid_pt)
+    qapp.processEvents()
+
+    # Check live update: pipe endpoints should have moved
+    for p in attached_pipes:
+        if p.start_node_id == "J1":
+            assert p.start_pos != init_j1_scene
+        if p.end_node_id == "J1":
+            assert p.end_pos != init_j1_scene
+
+    # Finish drag to end_pt
+    QTest.mouseMove(vp, end_pt)
+    qapp.processEvents()
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, end_pt)
+    qapp.processEvents()
+
+    # Verify positions_changed emitted exactly once
+    assert pos_changed_count == 1
+    assert window.isWindowModified() is True
+
+    # Check model space position change
+    final_pos_dict = gv.get_positions()
+    final_j1_model = final_pos_dict["J1"]
+    final_j1_scene = j1_item.pos()
+
+    # Scene shift
+    actual_dx_scene = final_j1_scene.x() - init_j1_scene.x()
+    actual_dy_scene = final_j1_scene.y() - init_j1_scene.y()
+
+    # Model shift: dx = sx / SCALE, dy = -sy / SCALE
+    expected_model_dx = actual_dx_scene / SCALE
+    expected_model_dy = -actual_dy_scene / SCALE
+
+    assert final_j1_model[0] == pytest.approx(init_j1_model[0] + expected_model_dx, rel=1e-3)
+    assert final_j1_model[1] == pytest.approx(init_j1_model[1] + expected_model_dy, rel=1e-3)
+
+    # Check other nodes did NOT move
+    for n in other_items:
+        assert n.pos() == other_initial_positions[n.node_id]
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_click_node_emits_node_clicked_without_positions_changed(qapp):
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window._on_load_example(example_paper_network)
+    qapp.processEvents()
+
+    gv = window.graph_view
+    view = gv.view
+    vp = view.viewport()
+
+    j1_item = next(n for n in gv.node_items() if n.node_id == "J1")
+    click_pt = view.mapFromScene(j1_item.scenePos())
+
+    clicked_nodes = []
+    gv.node_clicked.connect(clicked_nodes.append)
+    pos_changed_count = 0
+    gv.positions_changed.connect(lambda: pos_changed_count.__iadd__(1))
+
+    # Plain click without moving
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, click_pt)
+    qapp.processEvents()
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, click_pt)
+    qapp.processEvents()
+
+    assert clicked_nodes == ["J1"]
+    assert pos_changed_count == 0
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_drag_empty_background_pans_view(qapp):
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window._on_load_example(example_paper_network)
+    qapp.processEvents()
+
+    gv = window.graph_view
+    view = gv.view
+    vp = view.viewport()
+
+    initial_h = view.horizontalScrollBar().value()
+    initial_v = view.verticalScrollBar().value()
+    initial_node_positions = {n.node_id: QPointF(n.pos()) for n in gv.node_items()}
+
+    # Zoom in first so scrollbars can move
+    view.scale(2.0, 2.0)
+    qapp.processEvents()
+
+    # Pick empty background spot (e.g. top-left 30, 30)
+    start_pt = QPoint(30, 30)
+    end_pt = QPoint(150, 150)
+
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, start_pt)
+    qapp.processEvents()
+    QTest.mouseMove(vp, end_pt)
+    qapp.processEvents()
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, end_pt)
+    qapp.processEvents()
+
+    # No node moved in scene
+    for n in gv.node_items():
+        assert n.pos() == initial_node_positions[n.node_id]
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_after_drag_edit_param_preserves_position_and_zoom(qapp):
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window._on_load_example(example_paper_network)
+    qapp.processEvents()
+
+    gv = window.graph_view
+    view = gv.view
+    vp = view.viewport()
+
+    j1_item = next(n for n in gv.node_items() if n.node_id == "J1")
+    start_pt = view.mapFromScene(j1_item.scenePos())
+    end_pt = start_pt + QPoint(50, 50)
+
+    # Drag J1
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, start_pt)
+    QTest.mouseMove(vp, end_pt)
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, end_pt)
+    qapp.processEvents()
+
+    dragged_pos = gv.get_positions()["J1"]
+    view.scale(1.5, 1.5)
+    scale_before_edit = view.transform().m11()
+
+    # Edit pipe parameter
+    window._on_update_pipe("P1", {"length": 777.0})
+    qapp.processEvents()
+
+    # Dragged position is retained
+    pos_after_edit = gv.get_positions()["J1"]
+    assert pos_after_edit == pytest.approx(dragged_pos)
+
+    # Zoom scale is retained
+    scale_after_edit = view.transform().m11()
+    assert pytest.approx(scale_after_edit, rel=1e-3) == scale_before_edit
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_save_and_reopen_restores_dragged_positions(qapp, tmp_path):
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window._on_load_example(example_paper_network)
+    qapp.processEvents()
+
+    gv = window.graph_view
+    view = gv.view
+    vp = view.viewport()
+
+    j1_item = next(n for n in gv.node_items() if n.node_id == "J1")
+    start_pt = view.mapFromScene(j1_item.scenePos())
+    end_pt = start_pt + QPoint(60, -40)
+
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, start_pt)
+    QTest.mouseMove(vp, end_pt)
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, end_pt)
+    qapp.processEvents()
+
+    expected_dragged_pos = gv.get_positions()["J1"]
+
+    # Save to temp file
+    save_file = tmp_path / "dragged_test.wnet"
+    window._current_filepath = save_file
+    saved_ok = window._on_save()
+    assert saved_ok is True
+
+    window.close()
+
+    # Open in fresh MainWindow
+    fresh_window = MainWindow()
+    fresh_window.resize(1280, 800)
+    fresh_window.show()
+    fresh_window.load_file(save_file)
+    qapp.processEvents()
+
+    restored_pos = fresh_window.graph_view.get_positions()["J1"]
+    assert restored_pos[0] == pytest.approx(expected_dragged_pos[0], rel=1e-4)
+    assert restored_pos[1] == pytest.approx(expected_dragged_pos[1], rel=1e-4)
+    assert fresh_window.isWindowModified() is False
+
+    fresh_window.close()
+
+
+def test_selection_sync_and_visual_styling(qapp):
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window._on_load_example(example_paper_network)
+    qapp.processEvents()
+
+    gv = window.graph_view
+    bp = window.build_panel
+    vp = gv.view.viewport()
+
+    # 1. Click node J1 in graph: selects row in table, shows properties, sets blue selection ring
+    j1_item = next(n for n in gv.node_items() if n.node_id == "J1")
+    click_pt = gv.view.mapFromScene(j1_item.scenePos())
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, click_pt)
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, click_pt)
+    qapp.processEvents()
+
+    assert bp._selected_node_id == "J1"
+    assert bp.props_stack.currentWidget() == bp.props_node_widget
+    assert bp.prop_node_id_lbl.text() == "J1"
+    assert j1_item._selected is True
+
+    # 2. Select pipe row in table: sets blue selection line in graph
+    bp.select_pipe("P1")
+    qapp.processEvents()
+
+    p1_item = next(p for p in gv.pipe_items() if p.pipe_id == "P1")
+    assert j1_item._selected is False
+    assert p1_item._selected is True
+    assert bp.props_stack.currentWidget() == bp.props_pipe_widget
+
+    # 3. Checks tab highlight works independently
+    gv.highlight(["P1"])
+    assert p1_item._selected is True
+    assert p1_item._highlighted is True
+
+    # 4. Click empty background: clears selection
+    bg_pt = QPoint(30, 30)
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, bg_pt)
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, bg_pt)
+    qapp.processEvents()
+
+    assert bp._selected_node_id is None
+    assert bp._selected_pipe_id is None
+    assert p1_item._selected is False
+    assert p1_item._highlighted is True  # Highlight still intact!
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_parallel_pipes_after_drag(qapp):
+    net = Network()
+    net.add_node("junction", id="J1")
+    net.add_node("junction", id="J2")
+    net.add_pipe("J1", "J2", id="P1")
+    net.add_pipe("J1", "J2", id="P2")
+
+    window = MainWindow()
+    window.resize(1280, 800)
+    window.show()
+    window.network = net
+    window.refresh()
+    qapp.processEvents()
+
+    gv = window.graph_view
+    j1_item = next(n for n in gv.node_items() if n.node_id == "J1")
+
+    # Drag J1
+    start_pt = gv.view.mapFromScene(j1_item.scenePos())
+    end_pt = start_pt + QPoint(40, -50)
+    QTest.mousePress(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, start_pt)
+    QTest.mouseMove(gv.view.viewport(), end_pt)
+    QTest.mouseRelease(gv.view.viewport(), Qt.LeftButton, Qt.NoModifier, end_pt)
+    qapp.processEvents()
+
+    pipes = gv.pipe_items()
+    p1 = next(p for p in pipes if p.pipe_id == "P1")
+    p2 = next(p for p in pipes if p.pipe_id == "P2")
+
+    # Curvatures and paths remain distinct
+    assert p1.curvature != p2.curvature
+    assert p1.path != p2.path
+
+    window.setWindowModified(False)
+    window.close()
+
+
+def test_tooltips_content(qapp):
+    net = Network()
+    net.add_node("reservoir", id="R1", elevation=25.0, head=60.0)
+    net.add_node("junction", id="J1", elevation=None)  # unset elevation
+    net.add_pipe("R1", "J1", id="P1", length=500.0, diameter=0.3, roughness=0.0002, has_pump=True, pump_power=45.0)
+    net.add_pipe("J1", "R1", id="P2")  # unset params
+
+    gv = GraphView()
+    gv.draw_network(net)
+
+    r1_item = next(n for n in gv.node_items() if n.node_id == "R1")
+    j1_item = next(n for n in gv.node_items() if n.node_id == "J1")
+    p1_item = next(p for p in gv.pipe_items() if p.pipe_id == "P1")
+    p2_item = next(p for p in gv.pipe_items() if p.pipe_id == "P2")
+
+    r1_tip = r1_item.toolTip()
+    assert "ID: R1" in r1_tip
+    assert "Reservoir" in r1_tip
+    assert "Elevation: 25.0 m" in r1_tip or "Elevation: 25 m" in r1_tip
+    assert "Head: 60.0 m" in r1_tip or "Head: 60 m" in r1_tip
+
+    j1_tip = j1_item.toolTip()
+    assert "ID: J1" in j1_tip
+    assert "Junction" in j1_tip
+    assert "Elevation: not set" in j1_tip
+    assert "Head" not in j1_tip  # Head only for reservoirs
+
+    p1_tip = p1_item.toolTip()
+    assert "ID: P1" in p1_tip
+    assert "R1 -> J1" in p1_tip
+    assert "500" in p1_tip and "m" in p1_tip
+    assert "0.3" in p1_tip and "m" in p1_tip
+    assert "0.0002" in p1_tip and "m" in p1_tip
+    assert "45" in p1_tip and "kW" in p1_tip
+
+    p2_tip = p2_item.toolTip()
+    assert "ID: P2" in p2_tip
+    assert "J1 -> R1" in p2_tip
+    assert "Length: not set" in p2_tip
+    assert "Diameter: not set" in p2_tip
+    assert "Roughness: not set" in p2_tip
+

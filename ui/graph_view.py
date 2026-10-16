@@ -7,10 +7,10 @@ from typing import Dict, Tuple, List, Set, Optional
 
 import networkx as nx
 
-from PySide6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import (
     QColor, QPen, QBrush, QFont, QFontMetrics, QPainter,
-    QPainterPath, QPolygonF, QImage
+    QPainterPath, QPolygonF, QImage, QPainterPathStroker
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QGraphicsView,
@@ -41,15 +41,27 @@ def scene_to_model(sx: float, sy: float, scale: float = SCALE) -> Tuple[float, f
 
 
 class NodeItem(QGraphicsItem):
-    """Circular node item with centered ID label."""
+    """Movable circular node item with centered ID label, hover cursor, and live drag."""
 
-    def __init__(self, node_id: str, node_type: str, pos: QPointF, parent=None):
+    def __init__(self, node_id: str, node_type: str, pos: QPointF, graph_view: Optional["GraphView"] = None, parent=None):
         super().__init__(parent)
         self.node_id = node_id
         self.node_type = node_type.lower()
+        self._graph_view = graph_view
         self.setPos(pos)
         self.setZValue(10)
+
         self._highlighted = False
+        self._selected = False
+        self._press_scene_pos: Optional[QPointF] = None
+        self._press_item_pos: Optional[QPointF] = None
+        self._is_dragging = False
+
+        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
+        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.SizeAllCursor)
 
         self.color_map = {
             "junction": QColor("#87CEEB"),
@@ -63,19 +75,77 @@ class NodeItem(QGraphicsItem):
             self._highlighted = val
             self.update()
 
+    def set_selected(self, val: bool):
+        if self._selected != val:
+            self._selected = val
+            self.update()
+
+    def setSelected(self, selected: bool):
+        super().setSelected(selected)
+        self.set_selected(selected)
+
     def boundingRect(self) -> QRectF:
-        r = NODE_RADIUS + 4
-        return QRectF(-r, -r, 2 * r, 2 * r)
+        r = NODE_RADIUS + 8.0
+        return QRectF(-r, -r, 2.0 * r, 2.0 * r)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionHasChanged:
+            if getattr(self, "_graph_view", None) is not None:
+                self._graph_view._on_node_moved(self.node_id, self.pos())
+        return super().itemChange(change, value)
+
+    def mousePressEvent(self, event):
+        self._press_scene_pos = event.scenePos()
+        self._press_item_pos = self.pos()
+        self._is_dragging = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        if self._press_scene_pos is not None:
+            if (event.scenePos() - self._press_scene_pos).manhattanLength() > 2.0:
+                self._is_dragging = True
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        was_dragging = self._is_dragging
+        press_item_pos = self._press_item_pos
+        self._is_dragging = False
+        self._press_scene_pos = None
+        self._press_item_pos = None
+
+        if was_dragging and press_item_pos is not None and (self.pos() - press_item_pos).manhattanLength() > 0.5:
+            if self._graph_view:
+                self._graph_view._on_node_drag_finished(self.node_id)
+        elif not was_dragging:
+            if self._graph_view:
+                self._graph_view._on_node_clicked(self.node_id)
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing)
-        if self._highlighted:
-            pen = QPen(QColor("red"), 3.0)
-        else:
-            pen = QPen(QColor("#000000"), 1.5)
-        painter.setPen(pen)
+
+        # Base node circle fill
         painter.setBrush(QBrush(self.base_color))
-        painter.drawEllipse(QPointF(0, 0), NODE_RADIUS, NODE_RADIUS)
+
+        if self._selected and self._highlighted:
+            # Dual rings: inner red highlight and outer blue selection ring
+            painter.setPen(QPen(QColor("red"), 3.0))
+            painter.drawEllipse(QPointF(0, 0), NODE_RADIUS, NODE_RADIUS)
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#0078D7"), 3.5))
+            painter.drawEllipse(QPointF(0, 0), NODE_RADIUS + 4.0, NODE_RADIUS + 4.0)
+        elif self._selected:
+            # Blue selection ring
+            painter.setPen(QPen(QColor("#0078D7"), 3.5))
+            painter.drawEllipse(QPointF(0, 0), NODE_RADIUS, NODE_RADIUS)
+        elif self._highlighted:
+            # Red outline
+            painter.setPen(QPen(QColor("red"), 3.0))
+            painter.drawEllipse(QPointF(0, 0), NODE_RADIUS, NODE_RADIUS)
+        else:
+            # Normal black outline
+            painter.setPen(QPen(QColor("#000000"), 1.5))
+            painter.drawEllipse(QPointF(0, 0), NODE_RADIUS, NODE_RADIUS)
 
         # Center node ID label
         painter.setPen(QColor("#000000"))
@@ -94,24 +164,44 @@ class PipeItem(QGraphicsItem):
     def __init__(
         self,
         pipe_id: str,
+        start_node_id: str,
+        end_node_id: str,
         start_pos: QPointF,
         end_pos: QPointF,
         has_pump: bool = False,
         label_text: str = "",
         curvature: float = 0.0,
+        graph_view: Optional["GraphView"] = None,
         parent=None,
     ):
         super().__init__(parent)
         self.pipe_id = pipe_id
+        self.start_node_id = start_node_id
+        self.end_node_id = end_node_id
         self.start_pos = start_pos
         self.end_pos = end_pos
         self.has_pump = has_pump
         self.label_text = label_text or pipe_id
         self.curvature = curvature
+        self._graph_view = graph_view
         self.setZValue(5)
+
         self._highlighted = False
+        self._selected = False
 
         self._build_geometry()
+
+    def set_start_pos(self, pos: QPointF):
+        self.prepareGeometryChange()
+        self.start_pos = pos
+        self._build_geometry()
+        self.update()
+
+    def set_end_pos(self, pos: QPointF):
+        self.prepareGeometryChange()
+        self.end_pos = pos
+        self._build_geometry()
+        self.update()
 
     def _build_geometry(self):
         p1 = self.start_pos
@@ -198,18 +288,47 @@ class PipeItem(QGraphicsItem):
             self._highlighted = val
             self.update()
 
+    def set_selected(self, val: bool):
+        if self._selected != val:
+            self._selected = val
+            self.update()
+
     def boundingRect(self) -> QRectF:
         rect = self.path.boundingRect()
         rect = rect.united(self.arrow_poly.boundingRect())
         return rect.adjusted(-30, -30, 30, 30)
 
+    def shape(self) -> QPainterPath:
+        stroker = QPainterPathStroker()
+        stroker.setWidth(14.0)
+        p = stroker.createStroke(self.path)
+        p.addPolygon(self.arrow_poly)
+        return p
+
+    def mousePressEvent(self, event):
+        event.accept()
+        if self._graph_view:
+            self._graph_view._on_pipe_clicked(self.pipe_id)
+        super().mousePressEvent(event)
+
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing)
 
         # 1. Curve
-        if self._highlighted:
-            line_pen = QPen(QColor("red"), 3.5)
+        if self._selected and self._highlighted:
+            # Dual: thicker blue line beneath red line
+            painter.setPen(QPen(QColor("#0078D7"), 6.0, Qt.SolidLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(self.path)
+
+            line_pen = QPen(QColor("red"), 3.0, Qt.SolidLine)
             color = QColor("red")
+        elif self._selected:
+            color = QColor("#0078D7")
+            line_pen = QPen(color, 4.0, Qt.SolidLine)
+        elif self._highlighted:
+            color = QColor("red")
+            line_pen = QPen(color, 3.5, Qt.SolidLine)
         else:
             color = QColor("#DC143C") if self.has_pump else QColor("#333333")
             style = Qt.DashLine if self.has_pump else Qt.SolidLine
@@ -220,8 +339,9 @@ class PipeItem(QGraphicsItem):
         painter.drawPath(self.path)
 
         # 2. Arrowhead
+        arrow_color = QColor("#0078D7") if (self._selected and not self._highlighted) else (QColor("red") if self._highlighted else color)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(color))
+        painter.setBrush(QBrush(arrow_color))
         painter.drawPolygon(self.arrow_poly)
 
         # 3. Label with white rounded background
@@ -251,6 +371,7 @@ class LegendItem(QGraphicsItem):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        self.setAcceptedMouseButtons(Qt.NoButton)
         self.setZValue(100)
 
     def boundingRect(self) -> QRectF:
@@ -310,6 +431,8 @@ class NetworkGraphicsView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.viewport().setCursor(Qt.OpenHandCursor)
+        self._mouse_press_pos = None
 
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
@@ -335,6 +458,21 @@ class NetworkGraphicsView(QGraphicsView):
         except Exception:
             pass
 
+    def mousePressEvent(self, event):
+        self._mouse_press_pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if self._mouse_press_pos is not None:
+            cur_pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            diff = (cur_pos - self._mouse_press_pos).manhattanLength()
+            self._mouse_press_pos = None
+            if diff < 4:
+                item = self.itemAt(cur_pos)
+                if item is None or item is self._graph_view.legend_item or isinstance(item, QGraphicsSimpleTextItem):
+                    self._graph_view._on_background_clicked()
+
 
 # ---------------------------------------------------------------------------
 # Main GraphView Widget
@@ -344,10 +482,18 @@ class NetworkGraphicsView(QGraphicsView):
 class GraphView(QWidget):
     """Widget displaying the directed water network graph using QGraphicsScene/View."""
 
+    positions_changed = Signal()
+    node_clicked = Signal(str)
+    pipe_clicked = Signal(str)
+    background_clicked = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pos: Dict[str, Tuple[float, float]] = {}
         self._highlight_ids: Set[str] = set()
+        self._selected_node_id: Optional[str] = None
+        self._selected_pipe_id: Optional[str] = None
+        self._node_pipes: Dict[str, List[PipeItem]] = defaultdict(list)
         self._current_network = None
         self._last_drawn_node_count = 0
         self._pending_fit = True
@@ -357,6 +503,8 @@ class GraphView(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_fit_if_pending()
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._apply_fit_if_pending)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -409,6 +557,7 @@ class GraphView(QWidget):
 
     def _show_empty_hint(self):
         self.scene.clear()
+        self._node_pipes.clear()
         self.hint_item = QGraphicsSimpleTextItem("Add nodes and pipes to view network graph")
         self.hint_item.setFont(QFont("Segoe UI", 12))
         self.hint_item.setBrush(QBrush(QColor("#888888")))
@@ -461,6 +610,58 @@ class GraphView(QWidget):
                 if isinstance(item, (NodeItem, PipeItem)):
                     item.set_highlighted(False)
 
+    def set_selection(self, node_id: Optional[str] = None, pipe_id: Optional[str] = None):
+        """Set visual blue selection for a node or pipe, clearing previous selection."""
+        self._selected_node_id = node_id
+        self._selected_pipe_id = pipe_id
+        for it in self.scene.items():
+            if isinstance(it, NodeItem):
+                it.set_selected(it.node_id == node_id)
+            elif isinstance(it, PipeItem):
+                it.set_selected(it.pipe_id == pipe_id)
+
+    def clear_selection(self):
+        """Clear visual selection on all graph items."""
+        self._selected_node_id = None
+        self._selected_pipe_id = None
+        for it in self.scene.items():
+            if isinstance(it, (NodeItem, PipeItem)):
+                it.set_selected(False)
+
+    def node_items(self) -> List[NodeItem]:
+        """Return all NodeItem instances in the scene."""
+        return [it for it in self.scene.items() if isinstance(it, NodeItem)]
+
+    def pipe_items(self) -> List[PipeItem]:
+        """Return all PipeItem instances in the scene."""
+        return [it for it in self.scene.items() if isinstance(it, PipeItem)]
+
+    def _on_node_moved(self, node_id: str, new_scene_pos: QPointF):
+        """Called live while a node is being dragged."""
+        mx, my = scene_to_model(new_scene_pos.x(), new_scene_pos.y())
+        self._pos[node_id] = (mx, my)
+        for p_item in self._node_pipes.get(node_id, []):
+            if p_item.start_node_id == node_id:
+                p_item.set_start_pos(new_scene_pos)
+            if p_item.end_node_id == node_id:
+                p_item.set_end_pos(new_scene_pos)
+
+    def _on_node_drag_finished(self, node_id: str):
+        """Called once on mouse release after a real node drag."""
+        self.positions_changed.emit()
+
+    def _on_node_clicked(self, node_id: str):
+        """Called on a plain click on a node."""
+        self.node_clicked.emit(node_id)
+
+    def _on_pipe_clicked(self, pipe_id: str):
+        """Called on a plain click on a pipe."""
+        self.pipe_clicked.emit(pipe_id)
+
+    def _on_background_clicked(self):
+        """Called on a plain click on the empty canvas background."""
+        self.background_clicked.emit()
+
     def update_legend_position(self):
         """Keep legend pinned to the top-right corner of the view without zooming."""
         try:
@@ -478,17 +679,33 @@ class GraphView(QWidget):
         except (RuntimeError, AttributeError):
             pass
 
-    def fit_in_view(self, margin: float = 40.0):
-        """Fit all graph elements nicely in the viewport with margin."""
+    def fit_in_view(self, pad_px: float = 45.0):
+        """Fit all graph elements nicely in the viewport with pad_px margin."""
         items = [it for it in self.scene.items() if isinstance(it, (NodeItem, PipeItem))]
         if not items:
             return
         rect = items[0].sceneBoundingRect()
         for it in items[1:]:
             rect = rect.united(it.sceneBoundingRect())
-        if not rect.isEmpty():
-            self.view.fitInView(rect.adjusted(-margin, -margin, margin, margin), Qt.AspectRatioMode.KeepAspectRatio)
-            self.update_legend_position()
+        if rect.isEmpty():
+            return
+
+        vp = self.view.viewport()
+        vw, vh = vp.width(), vp.height()
+        if vw <= 50 or vh <= 50:
+            return
+
+        usable_w = max(10.0, float(vw) - 2.0 * pad_px)
+        usable_h = max(10.0, float(vh) - 2.0 * pad_px)
+        scale = min(usable_w / rect.width(), usable_h / rect.height())
+
+        pad_scene = pad_px / scale
+        self.scene.setSceneRect(rect.adjusted(-pad_scene, -pad_scene, pad_scene, pad_scene))
+
+        self.view.resetTransform()
+        self.view.scale(scale, scale)
+        self.view.centerOn(rect.center())
+        self.update_legend_position()
 
     def render_to_image(self, scale: float = 2.0, margin: float = 24.0) -> QImage:
         """Render the network graph cropped to content plus margin on a white background."""
@@ -519,12 +736,10 @@ class GraphView(QWidget):
         lw = self.legend_item.boundingRect().width()
         lh = self.legend_item.boundingRect().height()
 
-        # Try placing legend at top-right corner of graph rect
         lx = graph_rect.right() - lw
         ly = graph_rect.top()
         legend_rect = QRectF(lx, ly, lw, lh)
 
-        # Check if this overlaps any node
         overlaps_node = any(legend_rect.intersects(n.sceneBoundingRect()) for n in nodes)
         if overlaps_node:
             lx = graph_rect.right() + 10.0
@@ -551,7 +766,6 @@ class GraphView(QWidget):
         self.scene.render(painter, target=QRectF(0, 0, w, h), source=export_rect)
         painter.end()
 
-        # Restore legend position for view
         self.update_legend_position()
         return image
 
@@ -583,6 +797,7 @@ class GraphView(QWidget):
             return
 
         self.scene.clear()
+        self._node_pipes.clear()
 
         # Build NetworkX MultiDiGraph for layout
         G = nx.MultiDiGraph()
@@ -620,6 +835,7 @@ class GraphView(QWidget):
 
         # Draw pipes/edges
         if network.pipes:
+            pipe_dict = {p.id: p for p in network.pipes}
             pair_counts = defaultdict(int)
             pair_index = defaultdict(int)
 
@@ -641,22 +857,55 @@ class GraphView(QWidget):
                     if u > v:
                         rad = -rad
 
+                p_obj = pipe_dict.get(data["id"])
                 p_item = PipeItem(
                     pipe_id=data["id"],
+                    start_node_id=u,
+                    end_node_id=v,
                     start_pos=scene_node_positions[u],
                     end_pos=scene_node_positions[v],
                     has_pump=data.get("has_pump", False),
                     label_text=data.get("label", data["id"]),
                     curvature=rad,
+                    graph_view=self,
                 )
+
+                # Pipe Tooltip
+                if p_obj:
+                    lines = [
+                        f"ID: {p_obj.id}",
+                        f"{p_obj.start} -> {p_obj.end}",
+                        f"Length: {f'{p_obj.length} m' if p_obj.length is not None else 'not set'}",
+                        f"Diameter: {f'{p_obj.diameter} m' if p_obj.diameter is not None else 'not set'}",
+                        f"Roughness: {f'{p_obj.roughness} m' if p_obj.roughness is not None else 'not set'}",
+                    ]
+                    if p_obj.has_pump:
+                        lines.append(f"Pump power: {p_obj.pump_power} kW")
+                    p_item.setToolTip("\n".join(lines))
+
                 p_item.set_highlighted(data["id"] in self._highlight_ids)
+                p_item.set_selected(data["id"] == self._selected_pipe_id)
                 self.scene.addItem(p_item)
+                self._node_pipes[u].append(p_item)
+                self._node_pipes[v].append(p_item)
 
         # Draw nodes
         for node in network.nodes:
             pos = scene_node_positions[node.id]
-            n_item = NodeItem(node.id, node.type, pos)
+            n_item = NodeItem(node.id, node.type, pos, graph_view=self)
+
+            # Node Tooltip
+            lines = [
+                f"ID: {node.id}",
+                f"Type: {node.type.capitalize()}",
+                f"Elevation: {f'{node.elevation} m' if node.elevation is not None else 'not set'}",
+            ]
+            if node.type.lower() == "reservoir":
+                lines.append(f"Head: {f'{node.head} m' if node.head is not None else 'not set'}")
+            n_item.setToolTip("\n".join(lines))
+
             n_item.set_highlighted(node.id in self._highlight_ids)
+            n_item.set_selected(node.id == self._selected_node_id)
             self.scene.addItem(n_item)
 
         # Legend item
@@ -677,32 +926,3 @@ class GraphView(QWidget):
     @_needs_fit.setter
     def _needs_fit(self, val: bool):
         self._pending_fit = val
-
-    # ------------------------------------------------------------------
-    # Backward compatibility shim for tests
-    # ------------------------------------------------------------------
-
-    @property
-    def ax(self):
-        """Backward-compatibility shim allowing tests to access ax.texts."""
-        view_self = self
-
-        class _AxCompat:
-            @property
-            def texts(self):
-                class _TextItem:
-                    def __init__(self, t):
-                        self._t = t
-
-                    def get_text(self):
-                        return self._t
-
-                items = []
-                for it in view_self.scene.items():
-                    if isinstance(it, NodeItem):
-                        items.append(_TextItem(it.node_id))
-                    elif isinstance(it, QGraphicsSimpleTextItem):
-                        items.append(_TextItem(it.text()))
-                return items
-
-        return _AxCompat()

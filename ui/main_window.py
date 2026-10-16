@@ -102,7 +102,18 @@ class MainWindow(QMainWindow):
         self.checks_view = ChecksView()
         self.incidence_view = IncidenceView()
 
+        self._syncing_selection = False
+
         self.checks_view.warning_double_clicked.connect(self._on_warning_double_clicked)
+        self.graph_view.positions_changed.connect(self._on_positions_changed)
+        self.graph_view.node_clicked.connect(self._on_graph_node_clicked)
+        self.graph_view.pipe_clicked.connect(self._on_graph_pipe_clicked)
+        self.graph_view.background_clicked.connect(self._on_graph_background_clicked)
+        self.graph_view.relayout_btn.clicked.connect(self._mark_edited)
+
+        self.build_panel.node_selected.connect(self._on_panel_node_selected)
+        self.build_panel.pipe_selected.connect(self._on_panel_pipe_selected)
+        self.build_panel.selection_cleared.connect(self._on_panel_selection_cleared)
 
         self.right_tabs.addTab(self.graph_view, "Network")
         self.right_tabs.addTab(self.matrix_view, "Matrices")
@@ -266,6 +277,67 @@ class MainWindow(QMainWindow):
             self._mark_edited()
         except Exception as e:
             self._handle_error("Failed to clear network", e)
+
+    def _on_positions_changed(self):
+        self.setWindowModified(True)
+        self._update_window_title()
+
+    def _on_graph_node_clicked(self, node_id: str):
+        if self._syncing_selection:
+            return
+        self._syncing_selection = True
+        try:
+            self.build_panel.select_node(node_id)
+            self.graph_view.set_selection(node_id=node_id)
+        finally:
+            self._syncing_selection = False
+
+    def _on_graph_pipe_clicked(self, pipe_id: str):
+        if self._syncing_selection:
+            return
+        self._syncing_selection = True
+        try:
+            self.build_panel.select_pipe(pipe_id)
+            self.graph_view.set_selection(pipe_id=pipe_id)
+        finally:
+            self._syncing_selection = False
+
+    def _on_graph_background_clicked(self):
+        if self._syncing_selection:
+            return
+        self._syncing_selection = True
+        try:
+            self.build_panel.clear_selection()
+            self.graph_view.clear_selection()
+        finally:
+            self._syncing_selection = False
+
+    def _on_panel_node_selected(self, node_id: str):
+        if self._syncing_selection:
+            return
+        self._syncing_selection = True
+        try:
+            self.graph_view.set_selection(node_id=node_id)
+        finally:
+            self._syncing_selection = False
+
+    def _on_panel_pipe_selected(self, pipe_id: str):
+        if self._syncing_selection:
+            return
+        self._syncing_selection = True
+        try:
+            self.graph_view.set_selection(pipe_id=pipe_id)
+        finally:
+            self._syncing_selection = False
+
+    def _on_panel_selection_cleared(self):
+        if self._syncing_selection:
+            return
+        self._syncing_selection = True
+        try:
+            self.graph_view.clear_selection()
+        finally:
+            self._syncing_selection = False
 
     def _mark_edited(self):
         self.graph_view.clear_highlight()
