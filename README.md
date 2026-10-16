@@ -29,12 +29,12 @@ networks.
 
 ## Entering parameters
 
-Physical network parameters can be entered during node/pipe creation or modified in the Properties panel:
+Physical network parameters can be entered during node/pipe creation or modified in the Properties panel (stored for the planned comparison with EPANET):
 - **Node Elevation**: elevation in metres ($m$).
 - **Reservoir Head**: total hydraulic head of the water surface in metres ($m$, reservoirs only).
 - **Pipe Length**: pipe length in metres ($m$).
 - **Pipe Diameter**: internal diameter in metres ($m$).
-- **Pipe Roughness**: absolute equivalent sand roughness ($\varepsilon$) in metres ($m$) for Darcy-Weisbach calculations (e.g. `3.59e-4`).
+- **Pipe Roughness**: absolute equivalent sand roughness ($\varepsilon$) in metres ($m$, stored for the planned comparison with EPANET; e.g. `3.59e-4`).
 - **Pump Power**: pump power in kilowatts ($kW$, stored only).
 
 Empty fields represent unset parameters (`None`); no default numbers are invented. The parameter status bar indicates if all parameters are complete or provides a detailed breakdown of missing fields.
@@ -109,5 +109,4 @@ and the "Not included yet" notes for details.
 
 ## License
 
-Add a license of your choice (e.g. MIT) before making this repository public
-long-term, or leave unlicensed if you don't want others to reuse the code.
+License: not specified yet. All rights reserved by the author unless stated otherwise.

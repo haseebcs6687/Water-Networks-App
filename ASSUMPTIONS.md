@@ -166,7 +166,7 @@ after `from_dict` round-trips.
 - **None = Not Set (No Invented Defaults)**: Unset parameters default to `None`. No arbitrary default numbers (e.g., standard pipe diameters or lengths) are ever invented or assumed.
 - **Reservoir Head Semantics**: `head` represents the total hydraulic head of the water surface ($H_R$, in metres) and is valid only for reservoirs ($P_R = H_R - z$, where $z$ is elevation). Attempting to set `head` on junctions or tanks raises `ValueError`.
 - **Legacy Node Elevations as Placeholders**: v1.0 files stored default elevations of `50.0 m` on all nodes. These numbers serve as structural placeholders rather than true surveyed data.
-- **Roughness Interpretation**: Pipe roughness specifies absolute equivalent sand roughness ($\varepsilon$, in metres) for Darcy-Weisbach calculations, not dimensionless coefficients.
+- **Roughness Interpretation**: Pipe roughness specifies absolute equivalent sand roughness ($\varepsilon$, in metres) stored for the planned comparison with EPANET, not dimensionless coefficients.
 - **Backward Compatibility and Schema Evolution**: Format version 2 extends `.wnet` to persist physical parameters while preserving full backward compatibility with version 1 files. Unknown keys in node, pipe, or top-level objects are ignored during deserialization to maintain forward resilience.
 
 ---
@@ -214,6 +214,24 @@ after `from_dict` round-trips.
 - **Optional Key in `.wnet` v2**: Saved files store non-zero bends in an optional top-level `"edge_bends": {pipe_id: float}` mapping. If no pipes are bent, the key is omitted. File version remains 2, and loaders ignore unknown keys, ensuring full backward compatibility.
 - **Re-layout Clears Bends**: Clicking "Re-layout" recalculates the node layout and clears all custom edge bends back to automatic separation curvature. Deleting a pipe also removes its associated bend.
 - **Single Modified Notification**: `edge_bends_changed` is emitted exactly once on mouse release after an actual drag has completed (not on clicks or programmatic setting). Loading a project or example resets bends silently and never marks the project modified.
+
+
+
+---
+
+## 15. v2.0 Design Decisions (not confirmed by client)
+
+These decisions were made while implementing the v2.0 switched-DAE comparison feature. The client has not confirmed them; they are listed in delivery emails as open items.
+
+- **Valves at both pipe ends**: The MATLAB reference places valves only at the start and end of pipe 2. The app generalises this: any pipe can have an optional valve at its start end (`valve_start`) and/or end end (`valve_end`). This is required to match the MATLAB reference for the specimen network.
+- **Valve row uses pipe-local flow**: The valve row is `(1-s)*Q_pipe + s*(P_after - P_before) = 0` where `Q_pipe` is the flow of the pipe the valve belongs to. The MATLAB reference writes `Q1` in the V1 row, but V1 belongs to pipe 2 and `Q1 = Q2` by junction continuity for the specimen network. Both formulations are equivalent for the specimen; this app uses `Q_pipe` for generality.
+- **Scale-aware regularity test**: Regularity is tested by normalising each row of the matrix pencil `(λE - A)` to unit L2-norm before computing the determinant / rank. This avoids false singularity results when physical parameters span many orders of magnitude (e.g. `b ≈ 1e-3` vs pressure heads ≈ 50).
+- **No new dependencies**: The DAE solver, scenario engine, and matrix builder use only `numpy`. No `scipy`, `sympy`, or other third-party libraries are added in v2.0.
+- **Default elevation is None (unset)**: Starting from v1.1.0, `add_node` without an explicit `elevation` argument produces `elevation=None` (not `50.0`). Old `.wnet` v1 files that contain `"elevation": 50.0` still load `50.0` correctly. This is a deliberate break from the v1.0.0 default.
+- **Physical parameters stored, not yet used**: All physical parameters (elevation, head, length, diameter, roughness) are stored in `.wnet` files and editable in the UI, but the current symbolic matrix builder (`build_matrices`) ignores them. The planned v2.0 numeric DAE builder will use them. All documentation (README, CHANGELOG, ASSUMPTIONS, in-app text) explicitly says "stored for the planned comparison with EPANET".
+- **PhysicsSettings dataclass**: `PhysicsSettings` lives in `core/physics.py` and carries `g`, `nu`, `friction_mode`, and `friction_factor`. `"darcy_weisbach"` mode raises `NotImplementedError` until the iteration is implemented. Default mode is `"constant"` with `friction_factor = 0.02`.
+- **Scenario and valve timing**: `Scenario` stores a list of `(switch_time, mode)` pairs. The initial mode is the mode at time 0. The client has not confirmed whether valve times are entered by the user or fixed; for the specimen they are hardcoded in `Scenario.matlab_specimen(k)`.
+
 
 
 

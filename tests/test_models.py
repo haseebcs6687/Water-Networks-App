@@ -330,3 +330,53 @@ def test_regression_example_networks_matrices_identical():
         assert p.length is None
     assert fresh_broken.nodes[0].head is None
 
+
+
+# ---------------------------------------------------------------------------
+# STEP 1a regression tests: default elevation is None (not 50.0 from v1.0.0)
+# ---------------------------------------------------------------------------
+
+def test_add_node_without_elevation_gives_none():
+    net = Network()
+    j = net.add_node("junction")
+    assert j.elevation is None, f"Expected None, got {j.elevation!r}"
+
+    r = net.add_node("reservoir")
+    assert r.elevation is None, f"Expected None, got {r.elevation!r}"
+
+    t = net.add_node("tank")
+    assert t.elevation is None, f"Expected None, got {t.elevation!r}"
+
+
+def test_from_dict_node_with_explicit_elevation_loads_it():
+    net = Network.from_dict({
+        "nodes": [{"id": "J1", "type": "junction", "elevation": 50.0}],
+        "pipes": [],
+    })
+    assert net.nodes[0].elevation == 50.0
+
+
+def test_from_dict_node_without_elevation_key_gives_none():
+    net = Network.from_dict({
+        "nodes": [{"id": "J1", "type": "junction"}],
+        "pipes": [],
+    })
+    assert net.nodes[0].elevation is None
+
+
+def test_build_matrices_unchanged_with_and_without_elevation():
+    net_no_elev = Network()
+    net_no_elev.add_node("reservoir", id="R1")
+    net_no_elev.add_node("junction", id="J1")
+    net_no_elev.add_pipe("R1", "J1", id="P1")
+
+    net_with_elev = Network()
+    net_with_elev.add_node("reservoir", id="R1", elevation=20.0)
+    net_with_elev.add_node("junction", id="J1", elevation=5.0)
+    net_with_elev.add_pipe("R1", "J1", id="P1")
+
+    m_no = build_matrices(net_no_elev)
+    m_with = build_matrices(net_with_elev)
+
+    for key in ("A_matrix", "E_matrix", "F_matrix", "G_matrix", "K_dimension", "labels"):
+        assert m_no[key] == m_with[key], f"Mismatch on {key!r}"

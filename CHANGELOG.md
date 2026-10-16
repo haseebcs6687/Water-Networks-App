@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Physical Parameters**: Support for entering and editing physical network properties in SI metric units:
   - Node elevation ($m$) for all node types.
   - Reservoir hydraulic head ($m$, valid only for reservoirs).
-  - Pipe length ($m$), internal diameter ($m$), and absolute sand roughness ($\varepsilon$, $m$) for Darcy-Weisbach calculations.
+  - Pipe length ($m$), internal diameter ($m$), and absolute sand roughness ($\varepsilon$, $m$) stored for the planned comparison with EPANET.
   - Pump power rating ($kW$, stored for reference).
 - **Properties Editor & Missing-Parameter Indicator**:
   - Interactive Properties panel in the build tab to view and edit properties of the selected node or pipe.
@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Save image..." exports clean, cropped high-resolution PNG images on a white background with legend and margins.
 
 ### Fixed
+- **Default elevation is unset**: Adding a node without an explicit elevation leaves elevation unset (`None`) instead of defaulting to 50.0.
 - **Empty Fields = Not Set**: Unset parameters strictly default to `None` with no invented placeholder numbers; clearing a field and pressing Apply sets it back to `None`.
 - **Stale Positions Between Examples**: Loading a new example or project clears existing positions cleanly so node positions do not carry over between distinct network topologies.
 - **Bend Ratio Consistency**: Curvature and midpoint displacement are calculated relative to the chord connecting clipped node-boundary endpoints, ensuring exact mathematical agreement between perpendicular drag distance and rendered curve displacement.

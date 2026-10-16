@@ -209,7 +209,7 @@ class BuildPanel(QWidget):
         self.prop_node_cap_edit = QLineEdit()
         self.prop_node_cap_edit.setPlaceholderText("not set")
         self.prop_node_cap_edit.setValidator(_create_double_validator(self))
-        self.prop_node_cap_edit.setToolTip("stored only, not used in calculations yet")
+        self.prop_node_cap_edit.setToolTip("stored for the planned comparison with EPANET")
 
         node_props_layout.addRow("ID:", self.prop_node_id_lbl)
         node_props_layout.addRow("Type:", self.prop_node_type_lbl)
@@ -250,7 +250,7 @@ class BuildPanel(QWidget):
         self.prop_pipe_power_edit = QLineEdit()
         self.prop_pipe_power_edit.setPlaceholderText("not set")
         self.prop_pipe_power_edit.setValidator(_create_double_validator(self))
-        self.prop_pipe_power_edit.setToolTip("stored only, not used in calculations yet")
+        self.prop_pipe_power_edit.setToolTip("stored for the planned comparison with EPANET")
 
         pipe_props_layout.addRow("ID:", self.prop_pipe_id_lbl)
         pipe_props_layout.addRow("Connection:", self.prop_pipe_conn_lbl)
