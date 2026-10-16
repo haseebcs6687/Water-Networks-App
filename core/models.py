@@ -57,6 +57,8 @@ def _validate_pipe_fields(
     roughness: Any,
     pump_power: Any = 0.0,
     has_pump: Any = False,
+    valve_start: Any = False,
+    valve_end: Any = False,
 ) -> None:
     l_ = _check_finite_number("length", length)
     if l_ is not None and l_ <= 0:
@@ -76,6 +78,12 @@ def _validate_pipe_fields(
 
     if not isinstance(has_pump, bool):
         raise ValueError(f"has_pump must be a boolean, got {has_pump!r}")
+
+    if not isinstance(valve_start, bool):
+        raise ValueError(f"valve_start must be a boolean, got {valve_start!r}")
+
+    if not isinstance(valve_end, bool):
+        raise ValueError(f"valve_end must be a boolean, got {valve_end!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -115,10 +123,18 @@ class Pipe:
     length: Optional[float] = None
     diameter: Optional[float] = None
     roughness: Optional[float] = None
+    valve_start: bool = False
+    valve_end: bool = False
 
     def __post_init__(self) -> None:
         _validate_pipe_fields(
-            self.length, self.diameter, self.roughness, self.pump_power, self.has_pump
+            self.length,
+            self.diameter,
+            self.roughness,
+            self.pump_power,
+            self.has_pump,
+            self.valve_start,
+            self.valve_end,
         )
 
 
@@ -221,6 +237,8 @@ class Network:
         length: Optional[float] = None,
         diameter: Optional[float] = None,
         roughness: Optional[float] = None,
+        valve_start: bool = False,
+        valve_end: bool = False,
     ) -> Pipe:
         """Add a pipe and return it."""
         if start == end:
@@ -232,7 +250,15 @@ class Network:
         if end not in node_ids:
             raise ValueError(f"Unknown end node: {end!r}")
 
-        _validate_pipe_fields(length, diameter, roughness, pump_power, has_pump)
+        _validate_pipe_fields(
+            length,
+            diameter,
+            roughness,
+            pump_power,
+            has_pump,
+            valve_start,
+            valve_end,
+        )
 
         if id is None:
             id = self._next_id("P")
@@ -250,6 +276,8 @@ class Network:
             length=length,
             diameter=diameter,
             roughness=roughness,
+            valve_start=valve_start,
+            valve_end=valve_end,
         )
         self._pipes.append(pipe)
         return pipe
@@ -285,13 +313,21 @@ class Network:
     def update_pipe(self, pipe_id: str, **fields: Any) -> Pipe:
         """Update properties of an existing pipe.
 
-        Allowed fields: 'length', 'diameter', 'roughness', 'has_pump', 'pump_power'.
+        Allowed fields: 'length', 'diameter', 'roughness', 'has_pump', 'pump_power', 'valve_start', 'valve_end'.
         """
         pipe = next((p for p in self._pipes if p.id == pipe_id), None)
         if pipe is None:
             raise ValueError(f"Unknown pipe ID: {pipe_id!r}")
 
-        allowed = {"length", "diameter", "roughness", "has_pump", "pump_power"}
+        allowed = {
+            "length",
+            "diameter",
+            "roughness",
+            "has_pump",
+            "pump_power",
+            "valve_start",
+            "valve_end",
+        }
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown field(s) for pipe: {sorted(unknown)}")
@@ -301,8 +337,18 @@ class Network:
         new_roughness = fields["roughness"] if "roughness" in fields else pipe.roughness
         new_has_pump = fields["has_pump"] if "has_pump" in fields else pipe.has_pump
         new_pump_power = fields["pump_power"] if "pump_power" in fields else pipe.pump_power
+        new_valve_start = fields["valve_start"] if "valve_start" in fields else pipe.valve_start
+        new_valve_end = fields["valve_end"] if "valve_end" in fields else pipe.valve_end
 
-        _validate_pipe_fields(new_length, new_diameter, new_roughness, new_pump_power, new_has_pump)
+        _validate_pipe_fields(
+            new_length,
+            new_diameter,
+            new_roughness,
+            new_pump_power,
+            new_has_pump,
+            new_valve_start,
+            new_valve_end,
+        )
 
         if "length" in fields:
             pipe.length = new_length
@@ -314,6 +360,10 @@ class Network:
             pipe.has_pump = new_has_pump
         if "pump_power" in fields:
             pipe.pump_power = new_pump_power
+        if "valve_start" in fields:
+            pipe.valve_start = new_valve_start
+        if "valve_end" in fields:
+            pipe.valve_end = new_valve_end
         return pipe
 
     def remove_pipe(self, pipe_id: str) -> None:
@@ -343,6 +393,24 @@ class Network:
 
     def to_dict(self) -> dict:
         """Return a plain-dict representation (JSON-serialisable)."""
+        pipes_data = []
+        for p in self._pipes:
+            p_dict = {
+                "id": p.id,
+                "start": p.start,
+                "end": p.end,
+                "has_pump": p.has_pump,
+                "pump_power": p.pump_power,
+                "length": p.length,
+                "diameter": p.diameter,
+                "roughness": p.roughness,
+            }
+            if p.valve_start:
+                p_dict["valve_start"] = True
+            if p.valve_end:
+                p_dict["valve_end"] = True
+            pipes_data.append(p_dict)
+
         return {
             "nodes": [
                 {
@@ -354,19 +422,7 @@ class Network:
                 }
                 for n in self._nodes
             ],
-            "pipes": [
-                {
-                    "id": p.id,
-                    "start": p.start,
-                    "end": p.end,
-                    "has_pump": p.has_pump,
-                    "pump_power": p.pump_power,
-                    "length": p.length,
-                    "diameter": p.diameter,
-                    "roughness": p.roughness,
-                }
-                for p in self._pipes
-            ],
+            "pipes": pipes_data,
             "counters": dict(self._counters),
         }
 
@@ -392,6 +448,8 @@ class Network:
                 length=pd_.get("length", None),
                 diameter=pd_.get("diameter", None),
                 roughness=pd_.get("roughness", None),
+                valve_start=bool(pd_.get("valve_start", False)),
+                valve_end=bool(pd_.get("valve_end", False)),
             )
         if "counters" in data and isinstance(data["counters"], dict):
             net._counters.update(data["counters"])

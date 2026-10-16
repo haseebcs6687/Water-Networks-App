@@ -380,3 +380,57 @@ def test_build_matrices_unchanged_with_and_without_elevation():
 
     for key in ("A_matrix", "E_matrix", "F_matrix", "G_matrix", "K_dimension", "labels"):
         assert m_no[key] == m_with[key], f"Mismatch on {key!r}"
+
+
+# ---------------------------------------------------------------------------
+# Pipe valve flags tests
+# ---------------------------------------------------------------------------
+
+def test_pipe_valve_flags_creation_and_update():
+    net = Network()
+    net.add_node("junction", "J1")
+    net.add_node("junction", "J2")
+
+    p = net.add_pipe("J1", "J2", id="P1", valve_start=True, valve_end=False)
+    assert p.valve_start is True
+    assert p.valve_end is False
+
+    net.update_pipe("P1", valve_start=False, valve_end=True)
+    assert p.valve_start is False
+    assert p.valve_end is True
+
+    # Invalid non-boolean values
+    with pytest.raises(ValueError, match="valve_start must be a boolean"):
+        net.update_pipe("P1", valve_start="yes")
+    with pytest.raises(ValueError, match="valve_end must be a boolean"):
+        net.update_pipe("P1", valve_end=1)
+
+    with pytest.raises(ValueError, match="valve_start must be a boolean"):
+        net.add_pipe("J1", "J2", valve_start=123)
+    with pytest.raises(ValueError, match="valve_end must be a boolean"):
+        net.add_pipe("J1", "J2", valve_end="false")
+
+
+def test_pipe_valve_flags_to_dict_and_from_dict():
+    net = Network()
+    net.add_node("junction", "J1")
+    net.add_node("junction", "J2")
+    net.add_pipe("J1", "J2", id="P1", valve_start=True, valve_end=True)
+    net.add_pipe("J2", "J1", id="P2", valve_start=False, valve_end=False)
+
+    d = net.to_dict()
+    p1_d = next(p for p in d["pipes"] if p["id"] == "P1")
+    p2_d = next(p for p in d["pipes"] if p["id"] == "P2")
+
+    assert p1_d.get("valve_start") is True
+    assert p1_d.get("valve_end") is True
+    assert "valve_start" not in p2_d
+    assert "valve_end" not in p2_d
+
+    reconstructed = Network.from_dict(d)
+    rp1 = next(p for p in reconstructed.pipes if p.id == "P1")
+    rp2 = next(p for p in reconstructed.pipes if p.id == "P2")
+    assert rp1.valve_start is True
+    assert rp1.valve_end is True
+    assert rp2.valve_start is False
+    assert rp2.valve_end is False

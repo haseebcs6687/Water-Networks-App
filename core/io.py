@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Tuple, Optional, Any, List
 
 from core.models import Network
+from core.scenario import Scenario
 
 
 SUPPORTED_FORMAT = "water-network"
@@ -18,11 +19,12 @@ SUPPORTED_VERSIONS = {1, 2}
 
 @dataclass
 class ProjectData:
-    """Container for fully loaded project data including network, positions, and edge bends."""
+    """Container for fully loaded project data including network, positions, edge bends, and scenario."""
 
     network: Network
     positions: Dict[str, Tuple[float, float]]
     edge_bends: Dict[str, float]
+    scenario: Optional[Scenario] = None
 
 
 def save_project(
@@ -30,8 +32,9 @@ def save_project(
     network: Network,
     positions: Optional[Dict[str, Tuple[float, float]]] = None,
     edge_bends: Optional[Dict[str, float]] = None,
+    scenario: Optional[Scenario] = None,
 ) -> None:
-    """Save a network and optional canvas node positions and edge bends to a JSON file.
+    """Save a network and optional canvas node positions, edge bends, and scenario to a JSON file.
 
     Parameters
     ----------
@@ -43,6 +46,8 @@ def save_project(
         Mapping of node IDs to (x, y) canvas coordinates.
     edge_bends : dict, optional
         Mapping of pipe IDs to dimensionless bend ratios.
+    scenario : Scenario, optional
+        Valve switching scenario.
     """
     path = Path(path)
     data = network.to_dict()
@@ -69,6 +74,9 @@ def save_project(
         }
         if bends_dict:
             payload["edge_bends"] = bends_dict
+
+    if scenario is not None:
+        payload["scenario"] = scenario.to_dict() if hasattr(scenario, "to_dict") else scenario
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
@@ -180,7 +188,21 @@ def load_project_full(path: str | Path) -> ProjectData:
             if str(pid) in pipe_ids:
                 edge_bends[str(pid)] = float(val)
 
-    return ProjectData(network=net, positions=positions, edge_bends=edge_bends)
+    # Parse scenario
+    scenario = None
+    raw_scenario = payload.get("scenario")
+    if raw_scenario is not None:
+        if isinstance(raw_scenario, dict):
+            scenario = Scenario.from_dict(raw_scenario)
+        else:
+            raise ValueError("Invalid project file: 'scenario' must be an object.")
+
+    return ProjectData(
+        network=net,
+        positions=positions,
+        edge_bends=edge_bends,
+        scenario=scenario,
+    )
 
 
 def load_project(path: str | Path) -> Tuple[Network, Dict[str, Tuple[float, float]]]:

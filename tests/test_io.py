@@ -273,3 +273,94 @@ def test_io_corrupt_bend_values_raise_value_error(tmp_path):
         load_project_full(f4)
 
 
+
+
+def test_valve_flags_and_scenario_io_round_trip(tmp_path):
+    from core.scenario import ValveId, Scenario, SwitchEvent
+    from core.io import save_project, load_project_full, load_project
+
+    net = Network()
+    net.add_node("reservoir", id="R1", elevation=20.0, head=50.0)
+    net.add_node("junction", id="J1", elevation=5.0)
+    # P1 has valve at start, P2 has valve at end
+    p1 = net.add_pipe("R1", "J1", id="P1", length=100.0, diameter=0.3, roughness=0.0001, valve_start=True, valve_end=False)
+    p2 = net.add_pipe("J1", "R1", id="P2", length=200.0, diameter=0.3, roughness=0.0001, valve_start=False, valve_end=True)
+
+    v1 = ValveId("P1", "start")
+    v2 = ValveId("P2", "end")
+    sc = Scenario(
+        title="Test IO Scenario",
+        initial={v1: 1, v2: 0},
+        events=[SwitchEvent(time=40.0, valve=v2, state=1)],
+        t_end=100.0,
+    )
+
+    file_path = tmp_path / "valves_and_scenario.wnet"
+    save_project(file_path, net, scenario=sc)
+
+    # Inspect raw JSON: valve_start on P1 is True, valve_end is not present (or omitted when False)
+    raw = json.loads(file_path.read_text(encoding="utf-8"))
+    pipe_p1_raw = next(p for p in raw["pipes"] if p["id"] == "P1")
+    pipe_p2_raw = next(p for p in raw["pipes"] if p["id"] == "P2")
+    assert pipe_p1_raw.get("valve_start") is True
+    assert "valve_end" not in pipe_p1_raw
+    assert "valve_start" not in pipe_p2_raw
+    assert pipe_p2_raw.get("valve_end") is True
+    assert "scenario" in raw
+    assert raw["scenario"]["title"] == "Test IO Scenario"
+
+    # load_project_full
+    proj = load_project_full(file_path)
+    assert len(proj.network.pipes) == 2
+    loaded_p1 = next(p for p in proj.network.pipes if p.id == "P1")
+    loaded_p2 = next(p for p in proj.network.pipes if p.id == "P2")
+    assert loaded_p1.valve_start is True
+    assert loaded_p1.valve_end is False
+    assert loaded_p2.valve_start is False
+    assert loaded_p2.valve_end is True
+
+    assert proj.scenario is not None
+    assert proj.scenario.title == sc.title
+    assert proj.scenario.initial == sc.initial
+    assert proj.scenario.events == sc.events
+
+    # load_project still returns 2-tuple (network, positions)
+    loaded_net, loaded_pos = load_project(file_path)
+    assert isinstance(loaded_net, Network)
+    assert isinstance(loaded_pos, dict)
+
+
+def test_legacy_file_without_valves_or_scenario_loads_defaults(tmp_path):
+    from core.io import load_project_full
+
+    # Literal JSON without valve flags or scenario
+    data = {
+        "format": "water-network",
+        "version": 2,
+        "nodes": [{"id": "J1", "type": "junction"}, {"id": "J2", "type": "junction"}],
+        "pipes": [{"id": "P1", "start": "J1", "end": "J2"}],
+    }
+    file_path = tmp_path / "no_valves.wnet"
+    file_path.write_text(json.dumps(data), encoding="utf-8")
+
+    proj = load_project_full(file_path)
+    assert proj.network.pipes[0].valve_start is False
+    assert proj.network.pipes[0].valve_end is False
+    assert proj.scenario is None
+
+
+def test_corrupt_scenario_rejected(tmp_path):
+    from core.io import load_project_full
+
+    data = {
+        "format": "water-network",
+        "version": 2,
+        "nodes": [{"id": "J1", "type": "junction"}, {"id": "J2", "type": "junction"}],
+        "pipes": [{"id": "P1", "start": "J1", "end": "J2"}],
+        "scenario": "not a dictionary",
+    }
+    file_path = tmp_path / "corrupt_scenario.wnet"
+    file_path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="'scenario' must be an object"):
+        load_project_full(file_path)
