@@ -248,12 +248,14 @@ class MainWindow(QMainWindow):
         if not self._maybe_save_changes():
             return
         self.network = example_factory()
+        pos = getattr(self.network, "default_positions", {})
         self.comparison_tab.set_network(self.network)
-        self.graph_view.set_positions({})
+        self.graph_view.set_positions(dict(pos) if pos else {})
         self.graph_view.set_edge_bends({})
         self.comparison_tab.reset()
         self._current_filepath = None
         self.refresh()
+        self.graph_view.fit_in_view()
         self.setWindowModified(False)
         self._update_window_title()
 

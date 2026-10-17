@@ -50,7 +50,23 @@ def example_broken_network() -> Network:
     # Disconnected island without supply
     net.add_pipe("J4", "J5", id="P5")
 
+    net.default_positions = example_broken_network_positions()
     return net
+
+
+def example_broken_network_positions() -> Dict[str, Tuple[float, float]]:
+    """Readable layout for the broken network with no overlapping nodes or labels."""
+    return {
+        "R1": (-0.8, 0.4),
+        "J1": (-0.3, 0.4),
+        "J2": (0.2, 0.7),
+        "J3": (0.2, 0.1),
+        "J4": (0.7, 0.4),
+        "J5": (0.7, -0.2),
+    }
+
+
+example_broken_network.positions = example_broken_network_positions()
 
 
 def specimen_network() -> Tuple[Network, Dict[str, Tuple[float, float]]]:

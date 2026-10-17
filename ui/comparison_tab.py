@@ -52,6 +52,17 @@ from core.comparison import (
 )
 
 
+def _clear_table_cell_widgets(table: QTableWidget):
+    """Cleanly remove and delete all cell widgets in the table."""
+    for r in range(table.rowCount()):
+        for c in range(table.columnCount()):
+            w = table.cellWidget(r, c)
+            if w is not None:
+                table.removeCellWidget(r, c)
+                w.deleteLater()
+                w.setParent(None)
+
+
 class ComparisonWorker(QObject):
     """Background worker for running DAE and EPANET simulations."""
 
@@ -416,9 +427,27 @@ class ComparisonTab(QWidget):
     # Update / Refresh logic
     # -----------------------------------------------------------------
 
+    def clear_results(self):
+        """Reset every result widget (tables, captions, summary lines, plots, banner)."""
+        self._last_result = None
+        self.outdated_banner.setVisible(False)
+        self.eq_table.setRowCount(0)
+        self.imp_table.setRowCount(0)
+        self.params_table.setRowCount(0)
+        if hasattr(self, "diff_table"):
+            self.diff_table.setRowCount(0)
+        if hasattr(self, "diff_summary_label"):
+            self.diff_summary_label.setText("")
+        self.eq_summary_label.setText("Run comparison to see equilibrium differences.")
+        self.imp_summary_label.setText("EPANET: none (EPANET has no impulses).")
+        if hasattr(self, "plots_widget"):
+            self.plots_widget.clear()
+        self.status_label.setText("Ready")
+
     def set_network(self, network: Network):
-        """Update network reference and refresh."""
+        """Update network reference, clear results and refresh."""
         self.network = network
+        self.clear_results()
         self.refresh()
 
     def update_tab(self, network: Network):
@@ -594,11 +623,13 @@ class ComparisonTab(QWidget):
             self.end_time_spin.setValue(int(round(self._scenario.t_end)))
 
             # Populate initial states table
+            _clear_table_cell_widgets(self.initial_table)
             self.initial_table.setRowCount(len(valves))
             for r, v in enumerate(valves):
                 it_v = QTableWidgetItem(str(v))
                 it_v.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 self.initial_table.setItem(r, 0, it_v)
+                self.initial_table.removeCellWidget(r, 0)
 
                 cb = QComboBox()
                 cb.addItems(["Open", "Closed"])
@@ -610,11 +641,14 @@ class ComparisonTab(QWidget):
             # Populate events table
             self._rebuild_events_table(valves)
         else:
+            _clear_table_cell_widgets(self.initial_table)
             self.initial_table.setRowCount(0)
+            _clear_table_cell_widgets(self.events_table)
             self.events_table.setRowCount(0)
 
     def _rebuild_events_table(self, valves: List[ValveId]):
         """Populate switching events table."""
+        _clear_table_cell_widgets(self.events_table)
         if not self._scenario:
             self.events_table.setRowCount(0)
             return
@@ -829,13 +863,7 @@ class ComparisonTab(QWidget):
         """Clear results and reset scenario and physics."""
         self._scenario = None
         self._physics = PhysicsSettings()
-        self._last_result = None
-        self.eq_table.setRowCount(0)
-        self.imp_table.setRowCount(0)
-        self.params_table.setRowCount(0)
-        self.eq_summary_label.setText("Run comparison to see equilibrium differences.")
-        self.status_label.setText("Ready")
-        self.outdated_banner.setVisible(False)
+        self.clear_results()
         self.valve_notice_label.setVisible(False)
         self.refresh()
 

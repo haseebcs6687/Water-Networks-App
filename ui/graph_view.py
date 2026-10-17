@@ -677,6 +677,10 @@ class PipeItem(QGraphicsItem):
             style = Qt.DashLine if self.has_pump else Qt.SolidLine
             line_pen = QPen(color, 2.0, style)
 
+        line_pen.setCosmetic(True)
+        if line_pen.widthF() < 2.0:
+            line_pen.setWidthF(2.0)
+
         painter.setPen(line_pen)
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(self.path)
@@ -891,7 +895,9 @@ class GraphView(QWidget):
 
         # Graphics Scene and View
         self.scene = QGraphicsScene(self)
+        self.scene.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
         self.view = NetworkGraphicsView(self.scene, self, self)
+        self.view.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
         layout.addWidget(self.view)
 
         self.legend_item = LegendItem()
@@ -1204,7 +1210,10 @@ class GraphView(QWidget):
                 del self._pos[nid]
 
         if not self._pos:
-            self._pos = nx.spring_layout(G, seed=42)
+            if hasattr(network, "default_positions") and network.default_positions:
+                self._pos = dict(network.default_positions)
+            else:
+                self._pos = nx.spring_layout(G, seed=42)
         else:
             fixed_nodes = [n for n in G.nodes() if n in self._pos]
             if len(fixed_nodes) < len(G.nodes()):
