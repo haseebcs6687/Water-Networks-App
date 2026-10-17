@@ -139,13 +139,13 @@ def draw_comparison(
         ax.text(
             0.5,
             0.5,
-            "Run comparison to display plots.",
+            "No results yet. Fill in the network, choose the valves and scenario on the left, then press Run.",
             horizontalalignment="center",
             verticalalignment="center",
             transform=ax.transAxes,
-            color="#888888",
-            fontsize=12,
-            fontstyle="italic",
+            color="#666666",
+            fontsize=11,
+            wrap=True,
         )
         ax.axis("off")
         fig.canvas.draw_idle()
@@ -616,7 +616,14 @@ class ComparisonPlots(QWidget):
     def set_result(self, result: Optional[ComparisonResult]):
         """Store result and redraw comparison plot."""
         self._result = result
-        if result is not None:
+        has_res = result is not None
+        self.top_container.setEnabled(has_res)
+        self.toolbar.setEnabled(has_res)
+        self.save_fig_btn.setEnabled(has_res)
+        self.export_csv_btn.setEnabled(has_res)
+        self.export_inp_btn.setEnabled(has_res)
+
+        if has_res:
             self._selected_states = default_states(result)
             self._build_states_menu()
         else:
@@ -630,6 +637,11 @@ class ComparisonPlots(QWidget):
         self._result = None
         self._selected_states = []
         self.states_menu.clear()
+        self.top_container.setEnabled(False)
+        self.toolbar.setEnabled(False)
+        self.save_fig_btn.setEnabled(False)
+        self.export_csv_btn.setEnabled(False)
+        self.export_inp_btn.setEnabled(False)
         draw_comparison(self.fig, None)
 
     def redraw(self):

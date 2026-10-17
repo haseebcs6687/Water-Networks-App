@@ -115,12 +115,7 @@ def run_selftest(log_path: Optional[Path] = None) -> int:
         write_log(f"QT_QPA_PLATFORM: {os.environ.get('QT_QPA_PLATFORM')}")
 
         # Ensure QApplication
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(["--selftest"])
-        app.setStyle("Fusion")
-        app.setOrganizationName(COMPANY_NAME)
-        app.setApplicationName(APP_ID)
+        app = setup_application(argv=["--selftest"])
 
         # 1. Build a network with parameters, check missing_parameters, save v2 with positions and edge bend, reload and compare
         write_log("Testing physical parameters, missing_parameters, and .wnet v2 save/reload...")
@@ -438,6 +433,23 @@ def run_selftest(log_path: Optional[Path] = None) -> int:
         return 1
 
 
+def setup_application(app: Optional[QApplication] = None, argv: Optional[list] = None) -> QApplication:
+    """Shared application configuration: Fusion style, metadata, icon, and attributes."""
+    if app is None:
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(argv if argv is not None else sys.argv)
+    app.setStyle("Fusion")
+    app.setOrganizationName(COMPANY_NAME)
+    app.setApplicationName(APP_ID)
+
+    icon_path = resource_path("assets/app.ico")
+    if icon_path.exists():
+        app_icon = QIcon(str(icon_path))
+        app.setWindowIcon(app_icon)
+    return app
+
+
 def main():
     setup_exception_hook()
 
@@ -457,22 +469,11 @@ def main():
         except Exception as e:
             print(f"Warning: SetCurrentProcessExplicitAppUserModelID failed: {e}")
 
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    app.setOrganizationName(COMPANY_NAME)
-    app.setApplicationName(APP_ID)
-
-    # Set application and window icon
-    icon_path = resource_path("assets/app.ico")
-    if icon_path.exists():
-        app_icon = QIcon(str(icon_path))
-        app.setWindowIcon(app_icon)
-    else:
-        app_icon = None
+    app = setup_application()
 
     window = MainWindow()
-    if app_icon:
-        window.setWindowIcon(app_icon)
+    if app.windowIcon():
+        window.setWindowIcon(app.windowIcon())
     window.show()
 
     sys.exit(app.exec())
@@ -480,3 +481,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

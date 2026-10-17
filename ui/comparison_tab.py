@@ -18,7 +18,7 @@ import math
 from typing import Dict, List, Optional, Tuple, Any
 
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QSize
-from PySide6.QtGui import QColor, QFont, QKeySequence
+from PySide6.QtGui import QColor, QFont, QKeySequence, QValidator
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QProgressBar,
     QFrame,
+    QSizePolicy,
 )
 
 from core.models import Network, Pipe
@@ -89,11 +90,33 @@ def _clear_table_cell_widgets(table: QTableWidget):
 
 
 class CopyableTableWidget(QTableWidget):
-    """QTableWidget with alternating row colors and Ctrl+C clipboard copy."""
+    """QTableWidget with alternating row colors, Ctrl+C clipboard copy, and empty hint text."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, placeholder_text: str = ""):
         super().__init__(parent)
         self.setAlternatingRowColors(True)
+        self._placeholder_text: str = placeholder_text
+
+    def setPlaceholderText(self, text: str):
+        self._placeholder_text = text
+        self.viewport().update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.rowCount() == 0 and self._placeholder_text:
+            from PySide6.QtGui import QPainter, QColor
+            painter = QPainter(self.viewport())
+            painter.setPen(QColor("#777777"))
+            font = painter.font()
+            font.setItalic(True)
+            painter.setFont(font)
+            rect = self.viewport().rect().adjusted(15, 30, -15, -30)
+            painter.drawText(
+                rect,
+                Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap,
+                self._placeholder_text,
+            )
+            painter.end()
 
     def keyPressEvent(self, event):
         if event.matches(QKeySequence.Copy):
@@ -131,6 +154,30 @@ class CopyableTableWidget(QTableWidget):
 
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText("\n".join(lines))
+
+
+class ScientificDoubleSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox displaying values in scientific notation (e.g. 1.0219e-06)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDecimals(10)
+
+    def textFromValue(self, val: float) -> str:
+        return f"{val:.4e}"
+
+    def valueFromText(self, text: str) -> float:
+        try:
+            return float(text)
+        except Exception:
+            return 0.0
+
+    def validate(self, text: str, pos: int):
+        try:
+            float(text)
+            return (QValidator.Acceptable, text, pos)
+        except Exception:
+            return (QValidator.Intermediate, text, pos)
 
 
 def format_table(table: QTableWidget):
@@ -227,10 +274,12 @@ class ComparisonTab(QWidget):
 
         # 1. Ready? box
         self.ready_group = QGroupBox("Ready?")
+        self.ready_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.MinimumExpanding)
         ready_layout = QVBoxLayout(self.ready_group)
         self.ready_label = QLabel()
         self.ready_label.setWordWrap(True)
         self.ready_label.setTextFormat(Qt.RichText)
+        self.ready_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.MinimumExpanding)
         ready_layout.addWidget(self.ready_label)
         left_layout.addWidget(self.ready_group)
 
@@ -382,9 +431,8 @@ class ComparisonTab(QWidget):
         adv_layout.addWidget(self.g_spin, 0, 1)
 
         adv_layout.addWidget(QLabel("Viscosity ν (m²/s):"), 1, 0)
-        self.nu_spin = QDoubleSpinBox()
+        self.nu_spin = ScientificDoubleSpinBox()
         self.nu_spin.setRange(1e-8, 1e-3)
-        self.nu_spin.setDecimals(10)
         self.nu_spin.setValue(1.0219e-06)
         self.nu_spin.valueChanged.connect(self._on_physics_edited)
         adv_layout.addWidget(self.nu_spin, 1, 1)
@@ -465,7 +513,9 @@ class ComparisonTab(QWidget):
         diff_layout = QVBoxLayout(diff_widget)
         diff_layout.setContentsMargins(6, 6, 6, 6)
         diff_layout.setSpacing(6)
-        self.diff_table = CopyableTableWidget()
+        self.diff_table = CopyableTableWidget(
+            placeholder_text="No results yet. Fill in the network, choose the valves and scenario on the left, then press Run."
+        )
         self.diff_table.setColumnCount(5)
         self.diff_table.setHorizontalHeaderLabels([
             "Time (s)",
@@ -475,8 +525,8 @@ class ComparisonTab(QWidget):
             "DAE - EPANET",
         ])
         diff_layout.addWidget(self.diff_table, 1)
-        self.diff_summary_label = QLabel("")
-        self.diff_summary_label.setStyleSheet("font-weight: bold; color: #333333;")
+        self.diff_summary_label = QLabel("No results yet. Run comparison to view point-by-point differences.")
+        self.diff_summary_label.setStyleSheet("color: #666666; font-style: italic;")
         diff_layout.addWidget(self.diff_summary_label)
         self.results_tabs.addTab(diff_widget, "Differences")
 
@@ -485,7 +535,9 @@ class ComparisonTab(QWidget):
         eq_layout = QVBoxLayout(eq_widget)
         eq_layout.setContentsMargins(6, 6, 6, 6)
         eq_layout.setSpacing(6)
-        self.eq_table = CopyableTableWidget()
+        self.eq_table = CopyableTableWidget(
+            placeholder_text="No results yet. Fill in the network, choose the valves and scenario on the left, then press Run."
+        )
         self.eq_table.setColumnCount(8)
         self.eq_table.setHorizontalHeaderLabels([
             "Interval",
@@ -498,8 +550,8 @@ class ComparisonTab(QWidget):
             "Diff (Eq vs EP)",
         ])
         eq_layout.addWidget(self.eq_table, 1)
-        self.eq_summary_label = QLabel("Run comparison to see equilibrium differences.")
-        self.eq_summary_label.setStyleSheet("font-weight: bold; color: #333333;")
+        self.eq_summary_label = QLabel("No results yet. Run comparison to view equilibrium differences.")
+        self.eq_summary_label.setStyleSheet("color: #666666; font-style: italic;")
         eq_layout.addWidget(self.eq_summary_label)
         self.results_tabs.addTab(eq_widget, "Equilibrium")
 
@@ -508,7 +560,9 @@ class ComparisonTab(QWidget):
         imp_layout = QVBoxLayout(imp_widget)
         imp_layout.setContentsMargins(6, 6, 6, 6)
         imp_layout.setSpacing(6)
-        self.imp_table = CopyableTableWidget()
+        self.imp_table = CopyableTableWidget(
+            placeholder_text="No results yet. Fill in the network, choose the valves and scenario on the left, then press Run."
+        )
         self.imp_table.setColumnCount(4)
         self.imp_table.setHorizontalHeaderLabels([
             "Time (s)",
@@ -517,8 +571,8 @@ class ComparisonTab(QWidget):
             "EPANET",
         ])
         imp_layout.addWidget(self.imp_table, 1)
-        self.imp_summary_label = QLabel("EPANET: none (EPANET has no impulses).")
-        self.imp_summary_label.setStyleSheet("font-style: italic; color: #555555;")
+        self.imp_summary_label = QLabel("No results yet. Run comparison to view Dirac impulses.")
+        self.imp_summary_label.setStyleSheet("color: #666666; font-style: italic;")
         imp_layout.addWidget(self.imp_summary_label)
         self.results_tabs.addTab(imp_widget, "Dirac impulses")
 
@@ -527,10 +581,12 @@ class ComparisonTab(QWidget):
         params_layout = QVBoxLayout(params_widget)
         params_layout.setContentsMargins(6, 6, 6, 6)
         params_layout.setSpacing(6)
-        params_note = QLabel("Parameters copied from the network at the moment of the click.")
-        params_note.setStyleSheet("color: #666666; font-style: italic;")
-        params_layout.addWidget(params_note)
-        self.params_table = CopyableTableWidget()
+        self.params_note = QLabel("No results yet. Parameters will be recorded when comparison is run.")
+        self.params_note.setStyleSheet("color: #666666; font-style: italic;")
+        params_layout.addWidget(self.params_note)
+        self.params_table = CopyableTableWidget(
+            placeholder_text="No results yet. Fill in the network, choose the valves and scenario on the left, then press Run."
+        )
         self.params_table.setColumnCount(4)
         self.params_table.setHorizontalHeaderLabels(["Element", "Parameter", "Value", "Unit"])
         params_layout.addWidget(self.params_table, 1)
@@ -587,9 +643,14 @@ class ComparisonTab(QWidget):
         if hasattr(self, "diff_table"):
             self.diff_table.setRowCount(0)
         if hasattr(self, "diff_summary_label"):
-            self.diff_summary_label.setText("")
-        self.eq_summary_label.setText("Run comparison to see equilibrium differences.")
-        self.imp_summary_label.setText("EPANET: none (EPANET has no impulses).")
+            self.diff_summary_label.setText("No results yet. Run comparison to view point-by-point differences.")
+            self.diff_summary_label.setStyleSheet("color: #666666; font-style: italic;")
+        self.eq_summary_label.setText("No results yet. Run comparison to view equilibrium differences.")
+        self.eq_summary_label.setStyleSheet("color: #666666; font-style: italic;")
+        self.imp_summary_label.setText("No results yet. Run comparison to view Dirac impulses.")
+        self.imp_summary_label.setStyleSheet("color: #666666; font-style: italic;")
+        if hasattr(self, "params_note"):
+            self.params_note.setText("No results yet. Parameters will be recorded when comparison is run.")
         if hasattr(self, "plots_widget"):
             self.plots_widget.clear()
         self.status_label.setText("Ready")
@@ -625,16 +686,21 @@ class ComparisonTab(QWidget):
             probs = problems(self.network, current_scen, current_phys)
 
             if probs:
-                html = "<div style='color: #721C24; background-color: #F8D7DA; padding: 6px; border-radius: 4px;'>"
-                html += "<b>Not ready to compare:</b><ul style='margin: 4px 0 0 16px; padding: 0;'>"
+                html = (
+                    "<div style='color: #721C24; background-color: #F8D7DA; padding: 6px; border-radius: 4px; "
+                    "word-wrap: break-word; overflow-wrap: break-word;'>"
+                    "<b>Not ready to compare:</b>"
+                    "<ul style='margin: 4px 0 0 16px; padding: 0; word-wrap: break-word;'>"
+                )
                 for p in probs:
-                    html += f"<li>{p}</li>"
+                    html += f"<li style='margin-bottom: 2px; word-wrap: break-word;'>{p}</li>"
                 html += "</ul></div>"
                 self.ready_label.setText(html)
                 self.run_btn.setEnabled(False)
             else:
                 html = (
-                    "<div style='color: #155724; background-color: #D4EDDA; padding: 6px; border-radius: 4px;'>"
+                    "<div style='color: #155724; background-color: #D4EDDA; padding: 6px; border-radius: 4px; "
+                    "word-wrap: break-word; overflow-wrap: break-word;'>"
                     "<b>Ready to compare</b>"
                     "</div>"
                 )
