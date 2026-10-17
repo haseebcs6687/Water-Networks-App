@@ -16,8 +16,8 @@ from typing import Dict, List, Optional, Tuple, Any
 
 import numpy as np
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QAction, QKeySequence
+from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtGui import QColor, QFont, QAction, QKeySequence, QPalette, QPixmap, QIcon
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -35,11 +35,24 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 
+QWIDGETSIZE_MAX = 16777215
+
 import matplotlib
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.lines import Line2D
 from matplotlib.ticker import ScalarFormatter, FuncFormatter
+
+ICON_MAP = {
+    "Home": "home",
+    "Back": "back",
+    "Forward": "forward",
+    "Pan": "move",
+    "Zoom": "zoom_to_rect",
+    "Subplots": "subplots",
+    "Customize": "qt4_editor_options",
+    "Save": "filesave",
+}
 
 from core.comparison import ComparisonResult
 from core.plotdata import (
@@ -307,24 +320,35 @@ def draw_comparison(
 
         # Top panel: title and legend
         if r == 0:
-            title_text = opts.get("title") or "switched DAE  and EPANET"
-            ax.set_title(title_text, fontsize=10)
+            if opts.get("title"):
+                title_text = opts.get("title")
+            elif result is not None and result.scenario and result.scenario.title:
+                s_title = result.scenario.title
+                if ":" in s_title and len(s_title) > 35:
+                    s_title = s_title.split(":")[0].strip()
+                title_text = f"Switched DAE vs EPANET: {s_title}"
+            else:
+                title_text = "Switched DAE vs EPANET"
+            while "  " in title_text:
+                title_text = title_text.replace("  ", " ")
 
             line_dae = Line2D([0], [0], color=cD, linewidth=1.6)
             line_ep = Line2D([0], [0], color=cE, linewidth=0.9)
 
             fig_w = fig.bbox.width
             if fig_w < 800:
+                ax.set_title(title_text, fontsize=10, wrap=True)
                 ax.legend(
                     [line_dae, line_ep],
                     ["switched DAE", engine_label(result)],
                     loc="lower center",
-                    bbox_to_anchor=(0.5, 1.05),
+                    bbox_to_anchor=(0.5, 1.16),
                     ncol=2,
                     frameon=False,
                     fontsize=8,
                 )
             else:
+                ax.set_title(title_text, fontsize=10, pad=8, wrap=True)
                 ax.legend(
                     [line_dae, line_ep],
                     ["switched DAE", engine_label(result)],
@@ -363,39 +387,46 @@ class ComparisonPlots(QWidget):
         layout.setSpacing(6)
 
         # -------------------------------------------------------------
-        # TOP OPTIONS BAR
+        # TOP OPTIONS BAR (2 rows to prevent clipping at all window sizes)
         # -------------------------------------------------------------
-        opt_bar = QHBoxLayout()
-        opt_bar.setSpacing(12)
+        opt_box = QVBoxLayout()
+        opt_box.setSpacing(4)
 
-        # 1. States dropdown checklist
+        opt_row1 = QHBoxLayout()
+        opt_row1.setSpacing(10)
         self.states_btn = QToolButton()
         self.states_btn.setText("States...")
         self.states_btn.setPopupMode(QToolButton.InstantPopup)
         self.states_menu = QMenu(self)
         self.states_btn.setMenu(self.states_menu)
-        opt_bar.addWidget(self.states_btn)
+        opt_row1.addWidget(self.states_btn)
 
-        # 2. Head mode radio buttons
-        opt_bar.addWidget(QLabel("Display:"))
+        opt_row1.addWidget(QLabel("Display:"))
         self.radio_group = QButtonGroup(self)
         self.radio_pressure = QRadioButton("Pressure head")
         self.radio_pressure.setChecked(True)
-        self.radio_total = QRadioButton("Total head (EPANET Head)")
+        self.radio_total = QRadioButton("Total head (EPANET)")
         self.radio_group.addButton(self.radio_pressure, 0)
         self.radio_group.addButton(self.radio_total, 1)
         self.radio_group.buttonClicked.connect(self._on_head_mode_changed)
-        opt_bar.addWidget(self.radio_pressure)
-        opt_bar.addWidget(self.radio_total)
+        self.radio_pressure.setMinimumWidth(self.radio_pressure.fontMetrics().horizontalAdvance(self.radio_pressure.text()) + 26)
+        opt_row1.addWidget(self.radio_pressure)
+        opt_row1.addStretch()
+        opt_box.addLayout(opt_row1)
 
-        # 3. Show Dirac arrows checkbox
+        opt_row2 = QHBoxLayout()
+        opt_row2.setSpacing(10)
+        self.radio_total.setMinimumWidth(self.radio_total.fontMetrics().horizontalAdvance(self.radio_total.text()) + 26)
+        opt_row2.addWidget(self.radio_total)
         self.dirac_check = QCheckBox("Show Dirac arrows")
         self.dirac_check.setChecked(True)
         self.dirac_check.toggled.connect(self._on_dirac_toggled)
-        opt_bar.addWidget(self.dirac_check)
+        self.dirac_check.setMinimumWidth(self.dirac_check.fontMetrics().horizontalAdvance(self.dirac_check.text()) + 26)
+        opt_row2.addWidget(self.dirac_check)
+        opt_row2.addStretch()
+        opt_box.addLayout(opt_row2)
 
-        opt_bar.addStretch()
-        layout.addLayout(opt_bar)
+        layout.addLayout(opt_box)
 
         # -------------------------------------------------------------
         # MATPLOTLIB CANVAS & TOOLBAR (In QScrollArea)
@@ -403,13 +434,14 @@ class ComparisonPlots(QWidget):
         self.fig = Figure(figsize=(7, 9), facecolor="white", layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
-        self.toolbar.setStyleSheet("background-color: #FFFFFF; border: 1px solid #DDDDDD;")
 
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        self.canvas.setMinimumSize(640, 820)
+        self.canvas.setMinimumWidth(640)
         self.scroll_area.setWidget(self.canvas)
+
+        self.update_toolbar_style()
 
         layout.addWidget(self.toolbar)
         layout.addWidget(self.scroll_area, 1)
@@ -440,6 +472,78 @@ class ComparisonPlots(QWidget):
 
         self.clear()
 
+    def update_toolbar_style(self):
+        """Ensure toolbar and buttons have high contrast in both dark and light themes."""
+        pal = self.palette()
+        is_dark = pal.color(QPalette.Window).value() < 128
+        if is_dark:
+            bg = "#2D2D2D"
+            border = "#444444"
+            fg = QColor("#F0F0F0")
+        else:
+            bg = "#F8F9FA"
+            border = "#DDDDDD"
+            fg = QColor("#222222")
+
+        self.toolbar.setStyleSheet(f"""
+            QToolBar {{
+                background-color: {bg};
+                border: 1px solid {border};
+                border-radius: 4px;
+                padding: 2px;
+            }}
+            QToolButton {{
+                background-color: {bg};
+                border: none;
+                padding: 3px;
+                border-radius: 3px;
+            }}
+            QToolButton:hover {{
+                background-color: {'#3D3D3D' if is_dark else '#E2E6EA'};
+            }}
+        """)
+        import matplotlib.cbook as cbook
+        for btn in self.toolbar.findChildren(QToolButton):
+            txt = btn.text()
+            base_name = ICON_MAP.get(txt)
+            if not base_name:
+                continue
+            try:
+                path_reg = cbook._get_data_path("images", f"{base_name}.png")
+                path_large = path_reg.with_name(path_reg.name.replace(".png", "_large.png"))
+                fn = str(path_large if path_large.exists() else path_reg)
+                pm = QPixmap(fn)
+                mask = pm.createMaskFromColor(QColor("black"), Qt.MaskMode.MaskOutColor)
+                pm.fill(fg)
+                pm.setMask(mask)
+                btn.setIcon(QIcon(pm))
+            except Exception:
+                pass
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.PaletteChange:
+            self.update_toolbar_style()
+
+    def _update_canvas_height(self):
+        """Ensure all panels are shown without scrollbar if visible area is tall enough for 125 px per panel."""
+        n = max(1, len(self._selected_states) if self._selected_states else 5)
+        needed_h = n * 125
+        visible_h = self.scroll_area.viewport().height()
+        if visible_h >= needed_h:
+            self.canvas.setMinimumHeight(0)
+            self.canvas.setMaximumHeight(QWIDGETSIZE_MAX)
+            self.canvas.resize(self.scroll_area.viewport().width(), visible_h)
+            self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        else:
+            self.canvas.setMinimumHeight(needed_h)
+            self.canvas.setMaximumHeight(QWIDGETSIZE_MAX)
+            self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_canvas_height()
+
     # -----------------------------------------------------------------
     # State & Redraw logic
     # -----------------------------------------------------------------
@@ -465,9 +569,7 @@ class ComparisonPlots(QWidget):
 
     def redraw(self):
         """Redraw plot using stored result and current options (no re-simulation)."""
-        n = len(self._selected_states) if self._selected_states else 5
-        min_h = max(820, n * 120)
-        self.canvas.setMinimumSize(640, min_h)
+        self._update_canvas_height()
         opts = {
             "selected_states": list(self._selected_states),
             "head_mode": self._head_mode,

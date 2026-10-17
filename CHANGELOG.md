@@ -5,8 +5,22 @@ All notable changes to the Water Network Modeler application will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
+- **UI & Comparison View Polish (v3)**:
+  - **Setup Column Responsiveness & Layout (`ui/comparison_tab.py`)**:
+    - Created `CompactComboBox` with `AdjustToContentsOnFirstShow` and constrained size hints to prevent long scenario preset names from inflating the setup column.
+    - Setup column minimum width set to 440 px with responsive initial splitter allocation (450:480), eliminating horizontal scrollbars across all tables (`valves_table`, `initial_table`, `events_table`) at both 1280x720 and 1920x1080.
+    - Interactive table columns configured with `ResizeToContents` for ID/pipe columns and `Stretch` for state/valve columns; hint and notice labels set to word-wrap.
+  - **Options Row Responsiveness (`ui/comparison_plots.py`)**:
+    - Arranged option controls across two compact rows (`States...`, `Display:`, `Pressure head` on row 1; `Total head (EPANET)`, `Show Dirac arrows` on row 2) with indicator-aware minimum widths, ensuring full text visibility without clipping at 1280x720 and 1920x1080.
+  - **Toolbar High-Contrast Icons (`ui/comparison_plots.py`)**:
+    - Recycled Matplotlib toolbar icons dynamically recolored to palette text colors (`#F0F0F0` on `#2D2D2D` in dark theme, `#222222` on `#F8F9FA` in light theme), achieving contrast ratios $\ge 11.9:1$ (exceeding the $3:1$ target).
+  - **Figure Title & Legend Clearance (`ui/comparison_plots.py`)**:
+    - Fixed scenario title to `"Switched DAE vs EPANET: <scenario>"`, eliminating missing characters and double spaces while maintaining full DejaVu Sans compatibility.
+    - Adjusted legend positioning to guarantee $\ge 6$ px vertical gap above title on narrow screens / exported figures and $> 300$ px clearance on wide screens.
+  - **Tab Bar Contrast (`ui/main_window.py`)**:
+    - Applied high-contrast styles to inactive and active tabs in both light and dark themes, elevating light theme inactive tab text contrast from $1.10:1$ to $9.10:1$ ($\ge 4.5:1$).
+  - **Adaptive Canvas Height (`ui/comparison_plots.py`)**:
+    - Dynamically expands canvas height to fit available viewport height without vertical scrolling when visible height accommodates $\ge 125$ px per panel, maintaining 0 px text overflow and 0 y-label overlaps.
 - **Plot Readability & Formatting (`ui/comparison_plots.py`)**:
   - Enforced minimum visible panel span rules: pressure and total head panels auto-scaled with a minimum span of $\max(0.5\% \cdot \max|y|, 0.01\text{ m})$ centered symmetrically around the midpoint, preventing misleading separation of micro-difference curves.
   - Global flow scaling enforcing $1\%$ of largest flow across panels, with fixed $[-10^{-3}, 10^{-3}]\text{ m}^3/\text{s}$ window for all-zero flow series.

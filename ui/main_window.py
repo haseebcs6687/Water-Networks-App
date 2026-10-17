@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence, QAction
+from PySide6.QtCore import Qt, QEvent
+from PySide6.QtGui import QKeySequence, QAction, QPalette
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QTabWidget, QSplitter,
     QMessageBox, QStatusBar, QFileDialog, QScrollArea, QApplication
@@ -138,6 +138,64 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter)
         self._update_window_title()
+        self.apply_tab_style()
+
+    def apply_tab_style(self):
+        """Ensure right_tabs and child tab bars have high contrast >= 4.5:1 in both light and dark themes."""
+        pal = self.palette()
+        is_dark = pal.color(QPalette.Window).value() < 128
+        if is_dark:
+            ss = """
+            QTabBar::tab {
+                background: #2D2D2D;
+                color: #DCDCDC;
+                padding: 6px 14px;
+                border: 1px solid #444444;
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background: #1E1E1E;
+                color: #FFFFFF;
+                font-weight: bold;
+                border-bottom: 2px solid #0078D7;
+            }
+            QTabBar::tab:!selected:hover {
+                background: #383838;
+                color: #FFFFFF;
+            }
+            """
+        else:
+            ss = """
+            QTabBar::tab {
+                background: #E4E6EA;
+                color: #222222;
+                padding: 6px 14px;
+                border: 1px solid #C0C4CC;
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background: #FFFFFF;
+                color: #000000;
+                font-weight: bold;
+                border-bottom: 2px solid #0078D7;
+            }
+            QTabBar::tab:!selected:hover {
+                background: #D8DCE2;
+                color: #000000;
+            }
+            """
+        self.right_tabs.setStyleSheet(ss)
+        if hasattr(self, "comparison_tab") and hasattr(self.comparison_tab, "results_tabs"):
+            self.comparison_tab.results_tabs.setStyleSheet(ss)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.PaletteChange:
+            self.apply_tab_style()
 
     def _add_action(self, menu, text, shortcut, slot):
         act = QAction(text, self)

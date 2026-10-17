@@ -17,7 +17,7 @@ import copy
 import math
 from typing import Dict, List, Optional, Tuple, Any
 
-from PySide6.QtCore import Qt, QThread, Signal, QObject
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QSize
 from PySide6.QtGui import QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QWidget,
@@ -58,6 +58,23 @@ from core.plotdata import (
     max_abs_difference_after_last_switch,
 )
 from ui.comparison_plots import ComparisonPlots
+
+
+class CompactComboBox(QComboBox):
+    """QComboBox whose size hints do not expand to the longest item, preventing container blowout."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
+        if self.view() is not None:
+            self.view().setTextElideMode(Qt.ElideRight)
+
+    def minimumSizeHint(self):
+        return QSize(80, 24)
+
+    def sizeHint(self):
+        return QSize(160, 24)
+
 
 
 def _clear_table_cell_widgets(table: QTableWidget):
@@ -230,13 +247,17 @@ class ComparisonTab(QWidget):
         self.valves_table = QTableWidget()
         self.valves_table.setColumnCount(4)
         self.valves_table.setHorizontalHeaderLabels(["Pipe", "From -> To", "Valve at Start", "Valve at End"])
-        self.valves_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.valves_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.valves_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.valves_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.valves_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.valves_table.setMinimumHeight(110)
         self.valves_table.cellChanged.connect(self._on_valve_cell_changed)
         valves_layout.addWidget(self.valves_table)
 
         self.valve_notice_label = QLabel()
         self.valve_notice_label.setStyleSheet("color: #D9534F; font-size: 11px;")
+        self.valve_notice_label.setWordWrap(True)
         self.valve_notice_label.setVisible(False)
         valves_layout.addWidget(self.valve_notice_label)
 
@@ -248,7 +269,7 @@ class ComparisonTab(QWidget):
 
         preset_row = QHBoxLayout()
         preset_row.addWidget(QLabel("Preset:"))
-        self.preset_combo = QComboBox()
+        self.preset_combo = CompactComboBox()
         self.preset_combo.addItem("Custom")
         self.preset_combo.addItem("MATLAB specimen 1: valve 1 closed at t_s = 60 s (started from rest)")
         self.preset_combo.addItem("MATLAB specimen 2: no switching: relaxation from rest onto EPANET's steady state")
@@ -261,6 +282,7 @@ class ComparisonTab(QWidget):
 
         self.preset_mapping_label = QLabel("V1 = None, V2 = None")
         self.preset_mapping_label.setStyleSheet("color: #337AB7; font-weight: bold; font-size: 11px;")
+        self.preset_mapping_label.setWordWrap(True)
         scen_layout.addWidget(self.preset_mapping_label)
 
         title_row = QHBoxLayout()
@@ -274,7 +296,8 @@ class ComparisonTab(QWidget):
         self.initial_table = QTableWidget()
         self.initial_table.setColumnCount(2)
         self.initial_table.setHorizontalHeaderLabels(["Valve", "Initial State"])
-        self.initial_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.initial_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.initial_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.initial_table.setMaximumHeight(100)
         scen_layout.addWidget(self.initial_table)
 
@@ -282,7 +305,9 @@ class ComparisonTab(QWidget):
         self.events_table = QTableWidget()
         self.events_table.setColumnCount(3)
         self.events_table.setHorizontalHeaderLabels(["Time (s)", "Valve", "New State"])
-        self.events_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.events_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.events_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.events_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.events_table.setMinimumHeight(110)
         scen_layout.addWidget(self.events_table)
 
@@ -314,7 +339,7 @@ class ComparisonTab(QWidget):
 
         fric_row = QHBoxLayout()
         fric_row.addWidget(QLabel("Friction law:"))
-        self.friction_combo = QComboBox()
+        self.friction_combo = CompactComboBox()
         self.friction_combo.addItems([
             "Constant friction factor",
             "Swamee-Jain",
@@ -391,7 +416,7 @@ class ComparisonTab(QWidget):
         left_layout.addStretch()
 
         left_scroll.setWidget(left_widget)
-        left_scroll.setMinimumWidth(430)
+        left_scroll.setMinimumWidth(440)
         splitter.addWidget(left_scroll)
 
         # -------------------------------------------------------------
@@ -513,7 +538,7 @@ class ComparisonTab(QWidget):
         right_layout.addWidget(self.results_tabs, 1)
         splitter.addWidget(right_container)
 
-        splitter.setSizes([450, 830])
+        splitter.setSizes([450, 480])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         main_layout.addWidget(splitter)
@@ -522,11 +547,13 @@ class ComparisonTab(QWidget):
         """Toggle left setup column between collapsed (0) and expanded."""
         sizes = self.splitter.sizes()
         if sizes[0] > 0:
-            self._saved_setup_width = max(300, sizes[0])
+            self._saved_setup_width = max(440, sizes[0])
+            self.left_scroll.setMinimumWidth(0)
             self.splitter.setSizes([0, sizes[0] + sizes[1]])
             self.toggle_setup_btn.setText("Show setup")
         else:
             restore_w = getattr(self, "_saved_setup_width", 450)
+            self.left_scroll.setMinimumWidth(440)
             self.splitter.setSizes([restore_w, max(200, sizes[1] - restore_w)])
             self.toggle_setup_btn.setText("Hide setup")
 
@@ -535,8 +562,10 @@ class ComparisonTab(QWidget):
         sizes = self.splitter.sizes()
         if sizes[0] == 0:
             self.toggle_setup_btn.setText("Show setup")
+            self.left_scroll.setMinimumWidth(0)
         else:
             self._saved_setup_width = sizes[0]
+            self.left_scroll.setMinimumWidth(440)
             self.toggle_setup_btn.setText("Hide setup")
 
     # -----------------------------------------------------------------

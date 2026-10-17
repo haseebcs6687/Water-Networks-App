@@ -247,7 +247,7 @@ def test_1c_small_windows_and_toggle_setup(qapp):
 
     assert tab.toggle_setup_btn.text() == "Hide setup"
     assert tab.plots_widget.canvas.minimumSize().width() >= 640
-    assert tab.plots_widget.canvas.minimumSize().height() >= 820
+    assert tab.plots_widget.canvas.minimumSize().height() >= 625
 
     # Toggle at 1280x720
     w_before = tab.plots_widget.canvas.width()
