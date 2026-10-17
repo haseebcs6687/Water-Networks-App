@@ -68,6 +68,25 @@ def setup_exception_hook():
 
 def run_selftest(log_path: Optional[Path] = None) -> int:
     """Run offscreen selftest suite: load examples, verify matrices/checks, render tabs, test I/O."""
+    import faulthandler
+    try:
+        faulthandler.enable()
+        faulthandler.dump_traceback_later(90, exit=True)
+    except Exception:
+        pass
+
+    # In selftest mode no modal dialog may ever open
+    from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
+    QMessageBox.information = lambda *args, **kwargs: QMessageBox.Ok
+    QMessageBox.warning = lambda *args, **kwargs: QMessageBox.Ok
+    QMessageBox.critical = lambda *args, **kwargs: QMessageBox.Ok
+    QMessageBox.question = lambda *args, **kwargs: QMessageBox.Discard
+    QMessageBox.exec = lambda *args, **kwargs: QMessageBox.Ok
+    QMessageBox.exec_ = lambda *args, **kwargs: QMessageBox.Ok
+    QFileDialog.getSaveFileName = lambda *args, **kwargs: ("", "")
+    QFileDialog.getOpenFileName = lambda *args, **kwargs: ("", "")
+    QFileDialog.getExistingDirectory = lambda *args, **kwargs: ""
+
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
     if log_path is None:
@@ -400,10 +419,19 @@ def run_selftest(log_path: Optional[Path] = None) -> int:
         window.close()
         app.processEvents()
 
+        try:
+            faulthandler.cancel_dump_traceback_later()
+        except Exception:
+            pass
+
         write_log("=== Selftest PASSED (code 0) ===")
         return 0
 
     except Exception as e:
+        try:
+            faulthandler.cancel_dump_traceback_later()
+        except Exception:
+            pass
         tb = traceback.format_exc()
         write_log(f"FAIL: Selftest exception: {e}\n{tb}")
         write_log("=== Selftest FAILED (code 1) ===")

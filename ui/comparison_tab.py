@@ -189,6 +189,10 @@ class ComparisonTab(QWidget):
 
         self.splitter = QSplitter(Qt.Horizontal)
         splitter = self.splitter
+        splitter.setCollapsible(0, True)
+        splitter.setCollapsible(1, False)
+        self._saved_setup_width = 450
+        splitter.splitterMoved.connect(self._on_splitter_moved)
 
         # -------------------------------------------------------------
         # LEFT COLUMN (Setup, in QScrollArea)
@@ -197,7 +201,7 @@ class ComparisonTab(QWidget):
         left_scroll = self.left_scroll
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setMinimumWidth(430)
+        left_scroll.setMinimumWidth(0)
 
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
@@ -347,15 +351,15 @@ class ComparisonTab(QWidget):
         adv_layout.addWidget(QLabel("Gravity g (m/s²):"), 0, 0)
         self.g_spin = QDoubleSpinBox()
         self.g_spin.setRange(1.0, 30.0)
-        self.g_spin.setDecimals(5)
-        self.g_spin.setValue(9.81456)
+        self.g_spin.setDecimals(6)
+        self.g_spin.setValue(32.2 * 0.3048)
         self.g_spin.valueChanged.connect(self._on_physics_edited)
         adv_layout.addWidget(self.g_spin, 0, 1)
 
         adv_layout.addWidget(QLabel("Viscosity ν (m²/s):"), 1, 0)
         self.nu_spin = QDoubleSpinBox()
         self.nu_spin.setRange(1e-8, 1e-3)
-        self.nu_spin.setDecimals(8)
+        self.nu_spin.setDecimals(10)
         self.nu_spin.setValue(1.0219e-06)
         self.nu_spin.valueChanged.connect(self._on_physics_edited)
         adv_layout.addWidget(self.nu_spin, 1, 1)
@@ -397,6 +401,16 @@ class ComparisonTab(QWidget):
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(6, 6, 6, 6)
         right_layout.setSpacing(6)
+
+        # 0. Hide / Show setup toggle button
+        toggle_bar = QHBoxLayout()
+        toggle_bar.setContentsMargins(0, 0, 0, 0)
+        self.toggle_setup_btn = QPushButton("Hide setup")
+        self.toggle_setup_btn.setToolTip("Collapse or expand the left setup column")
+        self.toggle_setup_btn.clicked.connect(self._toggle_setup)
+        toggle_bar.addWidget(self.toggle_setup_btn)
+        toggle_bar.addStretch()
+        right_layout.addLayout(toggle_bar)
 
         # 1. Outdated banner (full width, wraps text, never cut)
         self.outdated_banner = QFrame()
@@ -503,6 +517,27 @@ class ComparisonTab(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         main_layout.addWidget(splitter)
+
+    def _toggle_setup(self):
+        """Toggle left setup column between collapsed (0) and expanded."""
+        sizes = self.splitter.sizes()
+        if sizes[0] > 0:
+            self._saved_setup_width = max(300, sizes[0])
+            self.splitter.setSizes([0, sizes[0] + sizes[1]])
+            self.toggle_setup_btn.setText("Show setup")
+        else:
+            restore_w = getattr(self, "_saved_setup_width", 450)
+            self.splitter.setSizes([restore_w, max(200, sizes[1] - restore_w)])
+            self.toggle_setup_btn.setText("Hide setup")
+
+    def _on_splitter_moved(self, pos: int, index: int):
+        """Keep toggle button text in sync when user drags the splitter handle."""
+        sizes = self.splitter.sizes()
+        if sizes[0] == 0:
+            self.toggle_setup_btn.setText("Show setup")
+        else:
+            self._saved_setup_width = sizes[0]
+            self.toggle_setup_btn.setText("Hide setup")
 
     # -----------------------------------------------------------------
     # Update / Refresh logic

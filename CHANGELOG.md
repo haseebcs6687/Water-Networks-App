@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **Comparison Plots & Differences Tab (`ui/comparison_plots.py`, `core/plotdata.py`, `ui/comparison_tab.py`)**:
+- **Plot Readability & Formatting (`ui/comparison_plots.py`)**:
+  - Enforced minimum visible panel span rules: pressure and total head panels auto-scaled with a minimum span of $\max(0.5\% \cdot \max|y|, 0.01\text{ m})$ centered symmetrically around the midpoint, preventing misleading separation of micro-difference curves.
+  - Global flow scaling enforcing $1\%$ of largest flow across panels, with fixed $[-10^{-3}, 10^{-3}]\text{ m}^3/\text{s}$ window for all-zero flow series.
+  - Custom tick formatter (`make_tick_formatter`) displaying $\le 4$ decimal places with standard decimal notation (no scientific offset) and hiding extraneous ticks outside panel boundaries.
+  - Strict constrained figure layout with `fig.align_ylabels()` and dynamic margin reservations preventing any text or label clipping across all window sizes (1900x900, 1100x800, 640x820, and 200 DPI export).
+- **Responsive Layout & Small Windows (`ui/comparison_plots.py`, `ui/comparison_tab.py`)**:
+  - Comparison plot canvas embedded in `QScrollArea` with a minimum figure size of $640 \times 820$ px (`min_h = max(820, n * 120)`), allowing smooth scrolling instead of compression on small screens.
+  - Responsive legend placement: automatically relocates above the first panel (`loc='lower center'`, `ncol=2`) when canvas width $< 800$ px.
+  - "Hide setup" / "Show setup" toggle button on collapsible left splitter handle to instantly maximize plot area.
+- **Outdated Warning Banner (`ui/comparison_tab.py`, `core/comparison.py`)**:
+  - Pure signature-based verification using rounded physics parameters, eliminating false positives and ensuring immediate update on parameter edits, preset switches, and runs.
+- **Graph View Legend Clearance & Example Layout (`ui/graph_view.py`, `core/examples.py`)**:
+  - Fitted view automatically reserves a 136 px right margin for the pinned legend while keeping model content horizontally centered.
+  - Exported PNG images place legend cleanly outside bounding box to guarantee zero overlap with nodes, pipes, and labels.
+  - Re-spaced broken example network layout achieving distance ratio of 3.23 ($\le 6$) and minimum node distance of 0.50 model units.
+- **Selftest Watchdog & Dialog Bypass (`main.py`)**:
+  - Added 90-second `faulthandler.dump_traceback_later` watchdog with clean cancellation on success.
+  - Bypassed all modal dialogs (`QMessageBox`, `QFileDialog`, `QDialog`) during `--selftest` execution.
+
   - Comparison tab refactored with a horizontal `QSplitter` dividing the setup column (minimum width $\ge 430$ px) and the results area.
   - Results area featuring full-width non-elided outdated warning banner and a 5-tab `QTabWidget`: "Plots", "Differences", "Equilibrium", "Dirac impulses", and "Parameters used".
   - High-fidelity reproduction of MATLAB reference `comparisonFigure` with stacked panels, shared time axis, solid `#0072B2` DAE curves per mode interval, stepped `#D91A1A` EPANET trajectories, switch jump indicators, and vertical switch event guidelines.

@@ -118,9 +118,9 @@ def compute_signature(
         "scenario": scenario.to_dict() if hasattr(scenario, "to_dict") else str(scenario),
         "settings": {
             "friction_mode": settings.friction_mode,
-            "friction_factor": float(settings.friction_factor),
-            "nu": float(settings.nu),
-            "g": float(settings.g),
+            "friction_factor": round(float(settings.friction_factor), 6),
+            "nu": round(float(settings.nu), 10),
+            "g": round(float(settings.g), 5),
         },
     }
     raw = json.dumps(payload, sort_keys=True)

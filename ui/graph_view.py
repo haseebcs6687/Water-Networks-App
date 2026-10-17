@@ -785,6 +785,7 @@ class NetworkGraphicsView(QGraphicsView):
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
         self.scale(factor, factor)
+        self._graph_view._user_manually_navigated = True
         self._graph_view.update_legend_position()
 
     def scrollContentsBy(self, dx: int, dy: int):
@@ -809,6 +810,13 @@ class NetworkGraphicsView(QGraphicsView):
     def mousePressEvent(self, event):
         self._mouse_press_pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._mouse_press_pos is not None:
+            cur_pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            if (cur_pos - self._mouse_press_pos).manhattanLength() > 4:
+                self._graph_view._user_manually_navigated = True
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
@@ -847,6 +855,7 @@ class GraphView(QWidget):
         self._current_network = None
         self._last_drawn_node_count = 0
         self._pending_fit = True
+        self._user_manually_navigated = False
 
         self._init_ui()
 
@@ -1050,27 +1059,29 @@ class GraphView(QWidget):
                 vw = self.view.viewport().width()
                 if vw <= 50:
                     return
-                target_scene_pt = self.view.mapToScene(max(10, vw - 135), 15)
+                lw = self.legend_item.boundingRect().width()
+                target_scene_pt = self.view.mapToScene(max(10, int(round(vw - lw - 8.0))), 8)
                 self.legend_item.setPos(target_scene_pt)
         except (RuntimeError, AttributeError):
             pass
 
-    def fit_in_view(self, pad_px: float = 45.0):
-        """Fit all graph elements nicely in the viewport with pad_px margin."""
+    def fit_in_view(self, pad_px: float = 30.0):
+        """Fit all graph elements nicely in the viewport reserving legend rectangle."""
+        self._user_manually_navigated = False
         nodes = [it for it in self.scene.items() if isinstance(it, NodeItem)]
-        all_items = [it for it in self.scene.items() if isinstance(it, (NodeItem, PipeItem))]
-        if not nodes or not all_items:
+        pipes = [it for it in self.scene.items() if isinstance(it, PipeItem)]
+        if not nodes:
             return
 
-        nodes_rect = nodes[0].sceneBoundingRect()
+        content_rect = nodes[0].sceneBoundingRect()
         for it in nodes[1:]:
-            nodes_rect = nodes_rect.united(it.sceneBoundingRect())
+            content_rect = content_rect.united(it.sceneBoundingRect())
 
-        all_rect = all_items[0].sceneBoundingRect()
-        for it in all_items[1:]:
-            all_rect = all_rect.united(it.sceneBoundingRect())
+        for p in pipes:
+            p_box = p.path.boundingRect().united(p.arrow_poly.boundingRect()).united(p._label_box)
+            content_rect = content_rect.united(p_box)
 
-        if nodes_rect.isEmpty() or all_rect.isEmpty():
+        if content_rect.isEmpty() or content_rect.width() <= 0 or content_rect.height() <= 0:
             return
 
         vp = self.view.viewport()
@@ -1078,25 +1089,29 @@ class GraphView(QWidget):
         if vw <= 50 or vh <= 50:
             return
 
-        usable_w = max(10.0, float(vw) - 2.0 * pad_px)
-        usable_h = max(10.0, float(vh) - 2.0 * pad_px)
+        legend_visible = hasattr(self, "legend_item") and self.legend_item and self.legend_item.isVisible()
+        # Reserve legend rectangle: right margin = legend width + 16 px (136 px)
+        lw = self.legend_item.boundingRect().width() if hasattr(self, "legend_item") and self.legend_item else 120.0
+        right_pad = (lw + 16.0) if legend_visible else pad_px
+        left_pad = pad_px
+        top_pad = pad_px
+        bottom_pad = pad_px
 
-        nc = nodes_rect.center()
-        dx_left = nc.x() - all_rect.left()
-        dx_right = all_rect.right() - nc.x()
-        max_half_w = max(dx_left, dx_right, nodes_rect.width() / 2.0, 1.0)
+        nc = content_rect.center()
+        max_w_left = max(nc.x() - content_rect.left(), 1.0)
+        max_w_right = max(content_rect.right() - nc.x(), 1.0)
+        max_h_top = max(nc.y() - content_rect.top(), 1.0)
+        max_h_bottom = max(content_rect.bottom() - nc.y(), 1.0)
 
-        dy_top = nc.y() - all_rect.top()
-        dy_bottom = all_rect.bottom() - nc.y()
-        max_half_h = max(dy_top, dy_bottom, nodes_rect.height() / 2.0, 1.0)
+        scale_l = max(10.0, float(vw) / 2.0 - left_pad) / max_w_left
+        scale_r = max(10.0, float(vw) / 2.0 - right_pad) / max_w_right
+        scale_t = max(10.0, float(vh) / 2.0 - top_pad) / max_h_top
+        scale_b = max(10.0, float(vh) / 2.0 - bottom_pad) / max_h_bottom
 
-        scale = min(usable_w / (2.0 * max_half_w), usable_h / (2.0 * max_half_h))
+        scale = min(scale_l, scale_r, scale_t, scale_b)
 
-        pad_scene = pad_px / scale
-        scene_w = 2.0 * (max_half_w + pad_scene)
-        scene_h = 2.0 * (max_half_h + pad_scene)
-        scene_rect = QRectF(nc.x() - max_half_w - pad_scene, nc.y() - max_half_h - pad_scene, scene_w, scene_h)
-        self.scene.setSceneRect(scene_rect)
+        pad_scene = max(vw, vh) / scale
+        self.scene.setSceneRect(content_rect.adjusted(-pad_scene, -pad_scene, pad_scene, pad_scene))
 
         self.view.resetTransform()
         self.view.scale(scale, scale)
@@ -1128,19 +1143,13 @@ class GraphView(QWidget):
         for it in graph_items[1:]:
             graph_rect = graph_rect.united(it.sceneBoundingRect())
 
-        # Determine legend placement inside the exported image without covering nodes
+        # Determine legend placement inside the exported image without covering nodes, pipes, or labels
         lw = self.legend_item.boundingRect().width()
         lh = self.legend_item.boundingRect().height()
 
-        lx = graph_rect.right() - lw
+        lx = graph_rect.right() + 16.0
         ly = graph_rect.top()
         legend_rect = QRectF(lx, ly, lw, lh)
-
-        overlaps_node = any(legend_rect.intersects(n.sceneBoundingRect()) for n in nodes)
-        if overlaps_node:
-            lx = graph_rect.right() + 10.0
-            ly = graph_rect.top()
-            legend_rect = QRectF(lx, ly, lw, lh)
 
         self._last_export_legend_rect = legend_rect
         self.legend_item.setVisible(True)
@@ -1183,6 +1192,7 @@ class GraphView(QWidget):
         )
         if is_first_draw:
             self._pending_fit = True
+            self._user_manually_navigated = False
 
         self._current_network = network
         self._last_drawn_node_count = len(network.nodes)

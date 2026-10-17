@@ -31,13 +31,15 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QMessageBox,
+    QScrollArea,
+    QFrame,
 )
 
 import matplotlib
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.lines import Line2D
-from matplotlib.ticker import ScalarFormatter
+from matplotlib.ticker import ScalarFormatter, FuncFormatter
 
 from core.comparison import ComparisonResult
 from core.plotdata import (
@@ -47,6 +49,51 @@ from core.plotdata import (
     impulse_arrows,
     engine_label,
 )
+
+
+def apply_panel_span_rules(
+    current_ymin: float,
+    current_ymax: float,
+    panel_max_abs_y: float,
+    is_flow: bool,
+    global_max_abs_flow: float,
+) -> Tuple[float, float]:
+    """Calculate widened (ymin, ymax) limits according to Step 1a rules."""
+    span = current_ymax - current_ymin
+    ymid = (current_ymin + current_ymax) / 2.0
+    if is_flow:
+        if global_max_abs_flow == 0.0:
+            return (-0.001, 0.001)
+        else:
+            target_span = 0.01 * global_max_abs_flow
+            if span < target_span:
+                return (ymid - target_span / 2.0, ymid + target_span / 2.0)
+    else:
+        target_span = max(0.005 * panel_max_abs_y, 0.01)
+        if span < target_span:
+            return (ymid - target_span / 2.0, ymid + target_span / 2.0)
+    return (current_ymin, current_ymax)
+
+
+_apply_panel_span_rules = apply_panel_span_rules
+
+
+def make_tick_formatter(get_limits_fn):
+    """Return a FuncFormatter that prints at most 4 decimals, no scientific offset,
+    and returns empty string for ticks outside the axis limits."""
+    def _format(val, pos=None):
+        lims = get_limits_fn()
+        if lims is not None:
+            if val < lims[0] - 1e-6 or val > lims[1] + 1e-6:
+                return ""
+        if abs(val) < 1e-12:
+            return "0"
+        s = f"{val:.4f}".rstrip("0").rstrip(".")
+        if s == "-0" or s == "":
+            return "0"
+        return s
+
+    return FuncFormatter(_format)
 
 
 def draw_comparison(
@@ -71,6 +118,7 @@ def draw_comparison(
     """
     fig.clear()
     fig.patch.set_facecolor("white")
+    fig.set_layout_engine("constrained")
 
     if result is None:
         ax = fig.add_subplot(111)
@@ -133,6 +181,18 @@ def draw_comparison(
     # Precompute Dirac impulses
     all_imp_arrows = impulse_arrows(result, selected) if show_dirac else {lbl: [] for lbl in selected}
 
+    # Step 1a: compute global maximum |flow| over all displayed flow series
+    global_max_flow = 0.0
+    for lbl in selected:
+        if "Flow" in lbl:
+            d_segs, _, ep_data = series(result, lbl, kind=head_mode)
+            for _, yk in d_segs:
+                if len(yk) > 0:
+                    global_max_flow = max(global_max_flow, float(np.max(np.abs(yk))))
+            t_ep, y_ep = ep_data
+            if len(y_ep) > 0:
+                global_max_flow = max(global_max_flow, float(np.max(np.abs(y_ep))))
+
     axes = fig.subplots(nrows=n_panels, ncols=1, sharex=True, squeeze=False)[:, 0]
 
     from PySide6.QtWidgets import QApplication
@@ -153,10 +213,8 @@ def draw_comparison(
 
         ax.set_xlim(xlims)
 
-        # Plain formatting without scientific offset
-        formatter = ScalarFormatter(useOffset=False)
-        formatter.set_scientific(False)
-        ax.yaxis.set_major_formatter(formatter)
+        # Step 1a: Tick formatter with at most 4 decimals, no offset, pruning outside ticks
+        ax.yaxis.set_major_formatter(make_tick_formatter(ax.get_ylim))
 
         dae_segs, jumps, ep_data = series(result, lbl, kind=head_mode)
 
@@ -240,6 +298,13 @@ def draw_comparison(
         else:
             ax.set_ylim(yl)
 
+        # Step 1a: Minimum visible range rule
+        ymin, ymax = ax.get_ylim()
+        is_flow = ("Flow" in lbl)
+        max_abs_y = max(abs(ymin), abs(ymax))
+        new_ymin, new_ymax = apply_panel_span_rules(ymin, ymax, max_abs_y, is_flow, global_max_flow)
+        ax.set_ylim(new_ymin, new_ymax)
+
         # Top panel: title and legend
         if r == 0:
             title_text = opts.get("title") or "switched DAE  and EPANET"
@@ -247,20 +312,34 @@ def draw_comparison(
 
             line_dae = Line2D([0], [0], color=cD, linewidth=1.6)
             line_ep = Line2D([0], [0], color=cE, linewidth=0.9)
-            ax.legend(
-                [line_dae, line_ep],
-                ["switched DAE", engine_label(result)],
-                loc="center left",
-                bbox_to_anchor=(1.02, 0.5),
-                frameon=False,
-                fontsize=8,
-            )
 
-        # Bottom panel: x axis label
+            fig_w = fig.bbox.width
+            if fig_w < 800:
+                ax.legend(
+                    [line_dae, line_ep],
+                    ["switched DAE", engine_label(result)],
+                    loc="lower center",
+                    bbox_to_anchor=(0.5, 1.05),
+                    ncol=2,
+                    frameon=False,
+                    fontsize=8,
+                )
+            else:
+                ax.legend(
+                    [line_dae, line_ep],
+                    ["switched DAE", engine_label(result)],
+                    loc="center left",
+                    bbox_to_anchor=(1.02, 0.5),
+                    frameon=False,
+                    fontsize=8,
+                )
+
+        # Bottom panel: x axis label and formatter
         if r == n_panels - 1:
+            ax.xaxis.set_major_formatter(make_tick_formatter(ax.get_xlim))
             ax.set_xlabel("t [s]", fontsize=10)
 
-    fig.subplots_adjust(left=0.10, right=0.82, top=0.94, bottom=0.08, hspace=0.18)
+    fig.align_ylabels()
     fig.canvas.draw_idle()
 
 
@@ -319,15 +398,21 @@ class ComparisonPlots(QWidget):
         layout.addLayout(opt_bar)
 
         # -------------------------------------------------------------
-        # MATPLOTLIB CANVAS & TOOLBAR
+        # MATPLOTLIB CANVAS & TOOLBAR (In QScrollArea)
         # -------------------------------------------------------------
-        self.fig = Figure(figsize=(7, 9), facecolor="white")
+        self.fig = Figure(figsize=(7, 9), facecolor="white", layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
         self.toolbar.setStyleSheet("background-color: #FFFFFF; border: 1px solid #DDDDDD;")
 
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.canvas.setMinimumSize(640, 820)
+        self.scroll_area.setWidget(self.canvas)
+
         layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas, 1)
+        layout.addWidget(self.scroll_area, 1)
 
         # -------------------------------------------------------------
         # BOTTOM EXPORT BUTTONS BAR
@@ -380,6 +465,9 @@ class ComparisonPlots(QWidget):
 
     def redraw(self):
         """Redraw plot using stored result and current options (no re-simulation)."""
+        n = len(self._selected_states) if self._selected_states else 5
+        min_h = max(820, n * 120)
+        self.canvas.setMinimumSize(640, min_h)
         opts = {
             "selected_states": list(self._selected_states),
             "head_mode": self._head_mode,

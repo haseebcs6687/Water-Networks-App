@@ -441,7 +441,30 @@ These decisions were made while implementing the v2.0 switched-DAE comparison fe
 1. "Save figure...": exports high-resolution 200 DPI PNG (or PDF/SVG depending on chosen extension) with crisp white background.
 2. "Export data (CSV)...": writes a comprehensive CSV containing time, DAE, EPANET, and difference columns for all states sampled at EPANET's report times, along with a secondary `<basename>_impulses.csv` detailing impulse times, states, and coefficients.
 3. "Export EPANET input file (.inp)...": exports the exact INP text produced by `export_epanet` for the run snapshot, allowing independent validation and third-party EPANET simulation.
-- All file dialogs feature sensible default filenames, provide clear status messages on completion, and catch write errors cleanly with user-friendly error dialogs without application tracebacks.
+---
+
+## 34. Minimum visible range of plot panels
+
+*(Not confirmed by the client)*
+
+**Decision**: After normal autoscaling, if the visible span of a PRESSURE or TOTAL HEAD panel is smaller than $\max(0.5\% \text{ of } \max|y|, 0.01\text{ m})$, it is widened symmetrically around the midpoint to that span. For FLOW panels, $1\%$ of the largest $|flow|$ over all displayed flow series (global scale) is used; if all flows are exactly zero, a fixed $\pm 10^{-3}\text{ m}^3/\text{s}$ window ($[-0.001, 0.001]$) is applied. Panels with Dirac arrows, jumps, or real transients remain unchanged. Tick labels format to at most 4 decimals with no scientific offset, omitting ticks beyond data limits.
+
+---
+
+## 35. Plots scroll instead of shrinking below 640x820
+
+*(Not confirmed by the client)*
+
+**Decision**: The comparison plot canvas is housed in a `QScrollArea` with a minimum figure size of $640 \times 820$ px (each panel at least 120 px high). Below this window size, scrollbars appear rather than squeezing the panels and overlapping text. If available canvas width is below 800 px, the legend moves above the first panel (horizontal, 2-column, centered) rather than the right side. A "Hide setup" toggle button on the left collapsible splitter allows users to collapse/expand the setup column, increasing plot area width.
+
+---
+
+## 36. Outdated banner is signature based
+
+*(Not confirmed by the client)*
+
+**Decision**: The warning banner "⚠️ Network or settings changed since this result - run again" relies strictly on comparing SHA-256 signatures of inputs (network snapshot, scenario, physics settings) against the signature stored in the simulation result (`ComparisonResult.is_outdated()`). No event counters or "dirty" flags are used. Signatures round floating-point parameters (e.g. gravitational acceleration $g$ and viscosity $\nu$) to prevent IEEE 754 precision mismatches. The banner dynamically recomputes after every edit, run, and preset change.
+
 
 
 
