@@ -1,6 +1,6 @@
 # Water Network Modeler (Desktop)
 
-**Version 1.1.0**
+**Version 2.0.0**
 
 A Windows desktop application for building and analysing water distribution
 networks, converted from an earlier Streamlit web app. Built with

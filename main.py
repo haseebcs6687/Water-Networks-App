@@ -105,12 +105,12 @@ def run_selftest(log_path: Optional[Path] = None) -> int:
     # Clear log file initially
     try:
         with open(log_path, "w", encoding="utf-8") as f:
-            f.write(f"=== WaterNetworkModeler Selftest Log Started ===\n")
+            f.write(f"=== WaterNetworkModeler {__version__} Selftest Log Started ===\n")
     except Exception as e:
         print(f"Failed to initialize log file {log_path}: {e}")
 
     try:
-        write_log("Starting selftest...")
+        write_log(f"Starting selftest for {APP_NAME} {__version__}...")
         write_log(f"Platform: {sys.platform}, Python: {sys.version.split()[0]}")
         write_log(f"QT_QPA_PLATFORM: {os.environ.get('QT_QPA_PLATFORM')}")
 
@@ -424,7 +424,7 @@ def run_selftest(log_path: Optional[Path] = None) -> int:
         except Exception:
             pass
 
-        write_log("=== Selftest PASSED (code 0) ===")
+        write_log(f"=== Selftest PASSED (code 0) === ({APP_NAME} {__version__})")
         return 0
 
     except Exception as e:

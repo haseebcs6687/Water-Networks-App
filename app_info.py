@@ -6,7 +6,7 @@ from pathlib import Path
 APP_NAME = "Water Network Modeler"
 APP_ID = "WaterNetworkModeler"
 COMPANY_NAME = "Abdul Haseeb"
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
 
 def resource_path(relative_path: str | Path) -> Path:

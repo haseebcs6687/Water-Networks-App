@@ -550,3 +550,24 @@ def run_epanet_inp(inp_text_or_path: str, dae: Optional[Any] = None) -> None:
                 pass
         shutil.rmtree(temp_dir, ignore_errors=True)
 
+
+def get_epanet_version() -> str:
+    """Return the EPANET engine version as a string (e.g. '2.3.5 (build 20305)')."""
+    try:
+        dll_path = get_epanet_dll_path()
+        dll = ctypes.windll.LoadLibrary(dll_path)
+        dll.EN_getversion.argtypes = [ctypes.POINTER(ctypes.c_int)]
+        dll.EN_getversion.restype = ctypes.c_int
+        v = ctypes.c_int()
+        ret = dll.EN_getversion(ctypes.byref(v))
+        if ret == 0:
+            ver_int = v.value
+            major = ver_int // 10000
+            minor = (ver_int % 10000) // 100
+            patch = ver_int % 100
+            return f"{major}.{minor}.{patch} (build {ver_int})"
+        return f"build {v.value}"
+    except Exception:
+        return "2.3.5 (bundled)"
+
+

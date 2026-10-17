@@ -6,8 +6,9 @@ from typing import Optional
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QKeySequence, QAction, QPalette
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QTabWidget, QSplitter,
-    QMessageBox, QStatusBar, QFileDialog, QScrollArea, QApplication
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTabWidget, QSplitter,
+    QMessageBox, QStatusBar, QFileDialog, QScrollArea, QApplication,
+    QDialog, QLabel, QDialogButtonBox, QTextEdit
 )
 
 from core.models import Network
@@ -29,7 +30,7 @@ from ui.incidence_view import IncidenceView
 from ui.comparison_tab import ComparisonTab
 
 
-from app_info import APP_NAME, __version__
+from app_info import APP_NAME, __version__, resource_path
 
 class MainWindow(QMainWindow):
     """Main desktop application window for Water Network Modeler."""
@@ -43,6 +44,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1000, 600)
         self._init_ui()
         self._size_and_center_window()
+        self._update_window_title()
         self.refresh()
         self.setWindowModified(False)
 
@@ -56,7 +58,7 @@ class MainWindow(QMainWindow):
 
     def _update_window_title(self):
         filename = self._current_filepath.name if self._current_filepath else "Untitled"
-        self.setWindowTitle(f"Water Network Modeler - {filename}[*]")
+        self.setWindowTitle(f"Water Network Modeler {__version__} - {filename}[*]")
 
     def _init_ui(self):
         menubar = self.menuBar()
@@ -78,6 +80,8 @@ class MainWindow(QMainWindow):
 
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction("&About").triggered.connect(self._show_about)
+        help_menu.addAction("&Third-party notices").triggered.connect(self._show_third_party_notices)
+        help_menu.addAction("&How to compare with EPANET").triggered.connect(self._show_how_to_compare)
 
         self.setStatusBar(QStatusBar(self))
 
@@ -498,3 +502,106 @@ class MainWindow(QMainWindow):
             msg = str(e)
             self.statusBar().showMessage(f"Error during refresh: {msg}")
             QMessageBox.critical(self, "Refresh Error", f"An error occurred while refreshing the UI:\n{msg}")
+
+    def _create_about_dialog(self) -> QDialog:
+        from core.epanet_runner import get_epanet_version
+        epanet_ver = get_epanet_version()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("About Water Network Modeler")
+        dlg.setMinimumWidth(440)
+        layout = QVBoxLayout(dlg)
+
+        title_label = QLabel(f"<h2>Water Network Modeler {__version__}</h2>")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+
+        epanet_label = QLabel(f"<b>EPANET Engine Version:</b> {epanet_ver}")
+        epanet_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(epanet_label)
+
+        layout.addSpacing(10)
+        license_text = (
+            "License: not specified yet. All rights reserved by the author unless stated otherwise."
+        )
+        lic_label = QLabel(license_text)
+        lic_label.setWordWrap(True)
+        lic_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(lic_label)
+
+        layout.addSpacing(15)
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn_box.accepted.connect(dlg.accept)
+        layout.addWidget(btn_box)
+
+        return dlg
+
+    def _show_about(self):
+        dlg = self._create_about_dialog()
+        dlg.exec()
+
+    def _create_third_party_notices_dialog(self) -> QDialog:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Third-party notices")
+        dlg.resize(700, 500)
+        layout = QVBoxLayout(dlg)
+
+        notices_path = resource_path("THIRD_PARTY_NOTICES.txt")
+        if not notices_path.is_file():
+            notices_path = Path(__file__).resolve().parent.parent / "THIRD_PARTY_NOTICES.txt"
+
+        content = ""
+        if notices_path.is_file():
+            try:
+                content = notices_path.read_text(encoding="utf-8")
+            except Exception as e:
+                content = f"Failed to read notices: {e}"
+        else:
+            content = "THIRD_PARTY_NOTICES.txt not found."
+
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setPlainText(content)
+        layout.addWidget(text_edit)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn_box.accepted.connect(dlg.accept)
+        layout.addWidget(btn_box)
+        return dlg
+
+    def _show_third_party_notices(self):
+        dlg = self._create_third_party_notices_dialog()
+        dlg.exec()
+
+    def _create_how_to_compare_dialog(self) -> QDialog:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("How to compare with EPANET")
+        dlg.resize(650, 420)
+        layout = QVBoxLayout(dlg)
+
+        title_label = QLabel("<h3>How to compare with EPANET</h3>")
+        layout.addWidget(title_label)
+
+        steps_text = (
+            "<ol>"
+            "<li><b>Build the network and fill all parameters:</b> Ensure all junctions, reservoirs, and pipes have their physical parameters (elevation, head, length, diameter, roughness) set.</li>"
+            "<li><b>Open the tab \"Comparison with EPANET\":</b> Switch to the Comparison tab in the right-hand panel.</li>"
+            "<li><b>Tick the valves:</b> In the Valves table, select which pipes contain valves at their start or end.</li>"
+            "<li><b>Choose or build the switching scenario:</b> Choose a preset specimen scenario (1 to 5) or specify initial valve states and switching times.</li>"
+            "<li><b>Press Run:</b> Click the Run button to simulate both the switched DAE model and the EPANET engine.</li>"
+            "<li><b>Read plots/tables and export:</b> Inspect the dynamic flows, pressure heads, equilibrium differences, and Dirac impulses in the plots and summary table. Use the Export buttons to save PNG plots, CSV data, or EPANET .inp files.</li>"
+            "</ol>"
+        )
+        label = QLabel(steps_text)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        layout.addStretch()
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn_box.accepted.connect(dlg.accept)
+        layout.addWidget(btn_box)
+        return dlg
+
+    def _show_how_to_compare(self):
+        dlg = self._create_how_to_compare_dialog()
+        dlg.exec()
+
