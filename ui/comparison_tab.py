@@ -18,7 +18,7 @@ import math
 from typing import Dict, List, Optional, Tuple, Any
 
 from PySide6.QtCore import Qt, QThread, Signal, QObject
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QSplitter,
     QScrollArea,
+    QTabWidget,
     QGroupBox,
     QLabel,
     QPushButton,
@@ -50,6 +51,13 @@ from core.comparison import (
     ComparisonResult,
     ComparisonError,
 )
+from core.plotdata import (
+    default_states,
+    series,
+    difference_rows,
+    max_abs_difference_after_last_switch,
+)
+from ui.comparison_plots import ComparisonPlots
 
 
 def _clear_table_cell_widgets(table: QTableWidget):
@@ -61,6 +69,63 @@ def _clear_table_cell_widgets(table: QTableWidget):
                 table.removeCellWidget(r, c)
                 w.deleteLater()
                 w.setParent(None)
+
+
+class CopyableTableWidget(QTableWidget):
+    """QTableWidget with alternating row colors and Ctrl+C clipboard copy."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlternatingRowColors(True)
+
+    def keyPressEvent(self, event):
+        if event.matches(QKeySequence.Copy):
+            self.copy_selection_to_clipboard()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def copy_selection_to_clipboard(self):
+        selected_ranges = self.selectedRanges()
+        if not selected_ranges:
+            r_min, r_max = 0, self.rowCount() - 1
+            c_min, c_max = 0, self.columnCount() - 1
+        else:
+            r_min = min(rg.topRow() for rg in selected_ranges)
+            r_max = max(rg.bottomRow() for rg in selected_ranges)
+            c_min = min(rg.leftColumn() for rg in selected_ranges)
+            c_max = max(rg.rightColumn() for rg in selected_ranges)
+
+        if r_max < r_min or c_max < c_min:
+            return
+
+        headers = []
+        for c in range(c_min, c_max + 1):
+            h_item = self.horizontalHeaderItem(c)
+            headers.append(h_item.text() if h_item else f"Col {c}")
+        lines = ["\t".join(headers)]
+
+        for r in range(r_min, r_max + 1):
+            row_vals = []
+            for c in range(c_min, c_max + 1):
+                it = self.item(r, c)
+                row_vals.append(it.text() if it else "")
+            lines.append("\t".join(row_vals))
+
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText("\n".join(lines))
+
+
+def format_table(table: QTableWidget):
+    """Ensure columns are sized to contents, headers fully visible, no '...'."""
+    table.resizeColumnsToContents()
+    fm = table.fontMetrics()
+    for c in range(table.columnCount()):
+        h_item = table.horizontalHeaderItem(c)
+        if h_item:
+            needed_w = fm.horizontalAdvance(h_item.text()) + 28
+            if table.columnWidth(c) < needed_w:
+                table.setColumnWidth(c, needed_w)
 
 
 class ComparisonWorker(QObject):
@@ -122,15 +187,17 @@ class ComparisonTab(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(6, 6, 6, 6)
 
-        splitter = QSplitter(Qt.Horizontal)
+        self.splitter = QSplitter(Qt.Horizontal)
+        splitter = self.splitter
 
         # -------------------------------------------------------------
         # LEFT COLUMN (Setup, in QScrollArea)
         # -------------------------------------------------------------
-        left_scroll = QScrollArea()
+        self.left_scroll = QScrollArea()
+        left_scroll = self.left_scroll
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setMinimumWidth(400)
+        left_scroll.setMinimumWidth(430)
 
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
@@ -320,19 +387,18 @@ class ComparisonTab(QWidget):
         left_layout.addStretch()
 
         left_scroll.setWidget(left_widget)
+        left_scroll.setMinimumWidth(430)
         splitter.addWidget(left_scroll)
 
         # -------------------------------------------------------------
-        # RIGHT COLUMN (Results)
+        # RIGHT RESULTS AREA (Splitter right child)
         # -------------------------------------------------------------
-        right_scroll = QScrollArea()
-        right_scroll.setWidgetResizable(True)
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(8, 8, 8, 8)
-        right_layout.setSpacing(10)
+        right_container = QWidget()
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setContentsMargins(6, 6, 6, 6)
+        right_layout.setSpacing(6)
 
-        # Outdated banner
+        # 1. Outdated banner (full width, wraps text, never cut)
         self.outdated_banner = QFrame()
         self.outdated_banner.setStyleSheet(
             "background-color: #FFF3CD; border: 1px solid #FFEEBA; border-radius: 4px; padding: 6px;"
@@ -341,26 +407,45 @@ class ComparisonTab(QWidget):
         outdated_layout.setContentsMargins(8, 4, 8, 4)
         self.outdated_label = QLabel("⚠️ Network or settings changed since this result - run again")
         self.outdated_label.setStyleSheet("color: #856404; font-weight: bold;")
+        self.outdated_label.setWordWrap(True)
         outdated_layout.addWidget(self.outdated_label)
         self.outdated_banner.setVisible(False)
         right_layout.addWidget(self.outdated_banner)
 
-        # Plots placeholder (leave clearly marked empty panel for next task)
-        plots_group = QGroupBox("Plots")
-        plots_layout = QVBoxLayout(plots_group)
-        self.plots_placeholder = QLabel("Plots appear here")
-        self.plots_placeholder.setAlignment(Qt.AlignCenter)
-        self.plots_placeholder.setStyleSheet(
-            "color: #888888; font-size: 14px; font-style: italic; background-color: #F8F9FA; "
-            "border: 1px dashed #CCCCCC; border-radius: 4px; padding: 30px;"
-        )
-        plots_layout.addWidget(self.plots_placeholder)
-        right_layout.addWidget(plots_group)
+        # 2. Results Tabs
+        self.results_tabs = QTabWidget()
 
-        # Equilibrium comparison table
-        eq_group = QGroupBox("Equilibrium comparison")
-        eq_layout = QVBoxLayout(eq_group)
-        self.eq_table = QTableWidget()
+        # Tab 1: Plots
+        self.plots_widget = ComparisonPlots()
+        self.plots_widget.status_message.connect(self._on_plot_status_message)
+        self.results_tabs.addTab(self.plots_widget, "Plots")
+
+        # Tab 2: Differences
+        diff_widget = QWidget()
+        diff_layout = QVBoxLayout(diff_widget)
+        diff_layout.setContentsMargins(6, 6, 6, 6)
+        diff_layout.setSpacing(6)
+        self.diff_table = CopyableTableWidget()
+        self.diff_table.setColumnCount(5)
+        self.diff_table.setHorizontalHeaderLabels([
+            "Time (s)",
+            "State Label",
+            "DAE",
+            "EPANET",
+            "DAE - EPANET",
+        ])
+        diff_layout.addWidget(self.diff_table, 1)
+        self.diff_summary_label = QLabel("")
+        self.diff_summary_label.setStyleSheet("font-weight: bold; color: #333333;")
+        diff_layout.addWidget(self.diff_summary_label)
+        self.results_tabs.addTab(diff_widget, "Differences")
+
+        # Tab 3: Equilibrium
+        eq_widget = QWidget()
+        eq_layout = QVBoxLayout(eq_widget)
+        eq_layout.setContentsMargins(6, 6, 6, 6)
+        eq_layout.setSpacing(6)
+        self.eq_table = CopyableTableWidget()
         self.eq_table.setColumnCount(8)
         self.eq_table.setHorizontalHeaderLabels([
             "Interval",
@@ -372,19 +457,18 @@ class ComparisonTab(QWidget):
             "Diff (End vs EP)",
             "Diff (Eq vs EP)",
         ])
-        self.eq_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.eq_table.setMinimumHeight(160)
-        eq_layout.addWidget(self.eq_table)
-
+        eq_layout.addWidget(self.eq_table, 1)
         self.eq_summary_label = QLabel("Run comparison to see equilibrium differences.")
         self.eq_summary_label.setStyleSheet("font-weight: bold; color: #333333;")
         eq_layout.addWidget(self.eq_summary_label)
-        right_layout.addWidget(eq_group)
+        self.results_tabs.addTab(eq_widget, "Equilibrium")
 
-        # Dirac impulses table
-        imp_group = QGroupBox("Dirac impulses")
-        imp_layout = QVBoxLayout(imp_group)
-        self.imp_table = QTableWidget()
+        # Tab 4: Dirac impulses
+        imp_widget = QWidget()
+        imp_layout = QVBoxLayout(imp_widget)
+        imp_layout.setContentsMargins(6, 6, 6, 6)
+        imp_layout.setSpacing(6)
+        self.imp_table = CopyableTableWidget()
         self.imp_table.setColumnCount(4)
         self.imp_table.setHorizontalHeaderLabels([
             "Time (s)",
@@ -392,33 +476,30 @@ class ComparisonTab(QWidget):
             "Coefficient",
             "EPANET",
         ])
-        self.imp_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.imp_table.setMinimumHeight(110)
-        imp_layout.addWidget(self.imp_table)
+        imp_layout.addWidget(self.imp_table, 1)
         self.imp_summary_label = QLabel("EPANET: none (EPANET has no impulses).")
         self.imp_summary_label.setStyleSheet("font-style: italic; color: #555555;")
         imp_layout.addWidget(self.imp_summary_label)
-        right_layout.addWidget(imp_group)
+        self.results_tabs.addTab(imp_widget, "Dirac impulses")
 
-        # Parameters used in this run table
-        params_group = QGroupBox("Parameters used in this run")
-        params_layout = QVBoxLayout(params_group)
+        # Tab 5: Parameters used
+        params_widget = QWidget()
+        params_layout = QVBoxLayout(params_widget)
+        params_layout.setContentsMargins(6, 6, 6, 6)
+        params_layout.setSpacing(6)
         params_note = QLabel("Parameters copied from the network at the moment of the click.")
         params_note.setStyleSheet("color: #666666; font-style: italic;")
         params_layout.addWidget(params_note)
-
-        self.params_table = QTableWidget()
+        self.params_table = CopyableTableWidget()
         self.params_table.setColumnCount(4)
         self.params_table.setHorizontalHeaderLabels(["Element", "Parameter", "Value", "Unit"])
-        self.params_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.params_table.setMinimumHeight(140)
-        params_layout.addWidget(self.params_table)
-        right_layout.addWidget(params_group)
+        params_layout.addWidget(self.params_table, 1)
+        self.results_tabs.addTab(params_widget, "Parameters used")
 
-        right_layout.addStretch()
-        right_scroll.setWidget(right_widget)
-        splitter.addWidget(right_scroll)
+        right_layout.addWidget(self.results_tabs, 1)
+        splitter.addWidget(right_container)
 
+        splitter.setSizes([450, 830])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         main_layout.addWidget(splitter)
@@ -921,6 +1002,7 @@ class ComparisonTab(QWidget):
         self.status_label.setText(f"Comparison completed successfully (DAE: {t_dae:.3f}s, EPANET: {t_ep:.3f}s).")
 
         self._populate_results(result)
+        self.results_tabs.setCurrentWidget(self.plots_widget)
         self.refresh()
 
     def _on_run_error(self, err_msg: str):
@@ -938,9 +1020,47 @@ class ComparisonTab(QWidget):
         self.status_label.setText(f"Comparison failed: {err_msg}")
         self.refresh()
 
+    def _on_plot_status_message(self, msg: str):
+        """Show plot status update in status label."""
+        self.status_label.setStyleSheet("color: #0055A5;")
+        self.status_label.setText(msg)
+
     def _populate_results(self, res: ComparisonResult):
         """Fill all results tables from ComparisonResult."""
-        # 1. Parameters Table
+        # 1. Plots Widget
+        self.plots_widget.set_result(res)
+
+        # 2. Differences Table
+        d_rows = difference_rows(res)
+        self.diff_table.setRowCount(len(d_rows))
+        for r, (t_val, s_lbl, dae_val, ep_val, diff_val) in enumerate(d_rows):
+            it_t = QTableWidgetItem(f"{t_val:.6g}")
+            it_t.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.diff_table.setItem(r, 0, it_t)
+
+            self.diff_table.setItem(r, 1, QTableWidgetItem(s_lbl))
+
+            it_dae = QTableWidgetItem(f"{dae_val:.6g}")
+            it_dae.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.diff_table.setItem(r, 2, it_dae)
+
+            it_ep = QTableWidgetItem(f"{ep_val:.6g}")
+            it_ep.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.diff_table.setItem(r, 3, it_ep)
+
+            it_diff = QTableWidgetItem(f"{diff_val:.6g}")
+            it_diff.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.diff_table.setItem(r, 4, it_diff)
+
+        max_d = max_abs_difference_after_last_switch(res)
+        if res.scenario.events:
+            self.diff_summary_label.setText(
+                f"After the last switch the largest difference is {max_d:.2e} (they coincide)."
+            )
+        else:
+            self.diff_summary_label.setText(f"Largest difference across run: {max_d:.2e}")
+
+        # 3. Parameters Table
         self.params_table.setRowCount(len(res.params))
         for r, (el, p_name, val, unit) in enumerate(res.params):
             self.params_table.setItem(r, 0, QTableWidgetItem(el))
@@ -948,7 +1068,7 @@ class ComparisonTab(QWidget):
             self.params_table.setItem(r, 2, QTableWidgetItem(val))
             self.params_table.setItem(r, 3, QTableWidgetItem(unit))
 
-        # 2. Equilibrium Comparison Table
+        # 4. Equilibrium Comparison Table
         self.eq_table.setRowCount(len(res.equilibrium))
         intervals_summary: Dict[str, Dict[str, float]] = {}
 
@@ -966,25 +1086,25 @@ class ComparisonTab(QWidget):
             self.eq_table.setItem(r, 1, QTableWidgetItem(row["mode"]))
             self.eq_table.setItem(r, 2, QTableWidgetItem(row["label"]))
 
-            it_dae_end = QTableWidgetItem(f"{row.get('dae_end', row.get('dae', 0.0)):.6f}")
+            it_dae_end = QTableWidgetItem(f"{row.get('dae_end', row.get('dae', 0.0)):.6g}")
             it_dae_end.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.eq_table.setItem(r, 3, it_dae_end)
 
-            it_dae_eq = QTableWidgetItem(f"{row.get('dae_eq', 0.0):.6f}")
+            it_dae_eq = QTableWidgetItem(f"{row.get('dae_eq', 0.0):.6g}")
             it_dae_eq.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.eq_table.setItem(r, 4, it_dae_eq)
 
-            it_ep = QTableWidgetItem(f"{row['epanet']:.6f}")
+            it_ep = QTableWidgetItem(f"{row['epanet']:.6g}")
             it_ep.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.eq_table.setItem(r, 5, it_ep)
 
             diff_end_val = row.get("diff_end", row.get("diff", 0.0))
-            it_diff_end = QTableWidgetItem(f"{diff_end_val:.6e}")
+            it_diff_end = QTableWidgetItem(f"{diff_end_val:.6g}")
             it_diff_end.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.eq_table.setItem(r, 6, it_diff_end)
 
             diff_eq_val = row.get("diff_eq", 0.0)
-            it_diff_eq = QTableWidgetItem(f"{diff_eq_val:.6e}")
+            it_diff_eq = QTableWidgetItem(f"{diff_eq_val:.6g}")
             it_diff_eq.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.eq_table.setItem(r, 7, it_diff_eq)
 
@@ -1005,17 +1125,17 @@ class ComparisonTab(QWidget):
             )
         self.eq_summary_label.setText("Max differences per interval: " + " ; ".join(summary_parts))
 
-        # 3. Dirac Impulses Table
+        # 5. Dirac Impulses Table
         self.imp_table.setRowCount(len(res.impulses))
         for r, imp in enumerate(res.impulses):
-            it_t = QTableWidgetItem(f"{imp['time']:.1f}")
+            it_t = QTableWidgetItem(f"{imp['time']:.6g}")
             it_t.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.imp_table.setItem(r, 0, it_t)
 
             lbl_display = f"{imp['state']} ({imp.get('state_index', '')})" if imp.get('state_index') else imp['state']
             self.imp_table.setItem(r, 1, QTableWidgetItem(lbl_display))
 
-            it_c = QTableWidgetItem(f"{imp['coefficient']:+.4f}")
+            it_c = QTableWidgetItem(f"{imp['coefficient']:+.6g}")
             it_c.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.imp_table.setItem(r, 2, it_c)
 
@@ -1026,6 +1146,10 @@ class ComparisonTab(QWidget):
             self.imp_summary_label.setText("No Dirac impulses occurred during switching. (EPANET: none)")
         else:
             self.imp_summary_label.setText(f"{len(res.impulses)} Dirac impulse entries at switching instants. (EPANET: none)")
+
+        # Format columns of all results tables to fit content without clipping headers
+        for tbl in [self.diff_table, self.params_table, self.eq_table, self.imp_table]:
+            format_table(tbl)
 
     def stop_worker(self):
         """Wait for worker thread to finish if running (called during window close)."""

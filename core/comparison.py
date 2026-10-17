@@ -20,6 +20,14 @@ from core.checks import validate_network
 from core.dae_solver import simulate, SimulationResult, SolverError
 from core.epanet_runner import run_epanet, EpanetResult, EpanetError
 from core.epanet_export import export_epanet, ScenarioError
+from core.plotdata import (
+    default_states,
+    series,
+    difference_rows,
+    max_abs_difference_after_last_switch,
+    impulse_arrows,
+    engine_label,
+)
 
 
 class ComparisonError(RuntimeError):

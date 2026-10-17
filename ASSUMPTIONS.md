@@ -377,8 +377,6 @@ These decisions were made while implementing the v2.0 switched-DAE comparison fe
 - The symbols follow interactive node dragging, live pipe curvature bending, and automatic layout.
 - The symbol has a fixed cosmetic pixel size (does not scale awkwardly with zoom), displays a descriptive tooltip (`Valve at start/end of <pipe>`), forwards clicks to select the parent pipe without disrupting hit-testing, is rendered in exported images ("Save image..."), and is included in the graph view legend.
 
----
-
 ## 28. Friction law choice in the UI
 
 *(Not confirmed by the client)*
@@ -387,6 +385,64 @@ These decisions were made while implementing the v2.0 switched-DAE comparison fe
 
 - When non-constant friction is selected, the constant factor spin box is hidden, and the simulation uses the real pipe roughness, diameter, fluid viscosity, and Reynolds number.
 - Advanced physical parameters (gravity $g$ and kinematic viscosity $\nu$) are grouped under a collapsed "Advanced Parameters" group with standard physical defaults ($g = 9.81456\text{ m/s}^2$, $\nu = 1.0219\times 10^{-6}\text{ m}^2/\text{s}$).
+
+---
+
+## 29. Plot reproduces the MATLAB figure; states selectable
+
+*(Not confirmed by the client)*
+
+**Decision**: The comparison plot visually reproduces MATLAB's `comparisonFigure` (`switchedDAE3_vs_EPANET.m` lines 614-690):
+- Vertically stacked panels with shared time axis and boxed axes, $x$-limits $[-0.01 T, T]$, grid alpha $0.12$, plain numbers on y-axis without scientific offsets.
+- DAE curves are drawn in solid `#0072B2` (linewidth 1.6) per mode interval (never drawing across switching discontinuities), with dotted jump segments at switch times.
+- EPANET trajectories are drawn on top in `#D91A1A` (linewidth 0.9) with `drawstyle='steps-post'`.
+- Light grey vertical lines (`#CCCCCC`) mark every switch event across all panels.
+- State selection is configurable via a dropdown checklist with quick buttons ("MATLAB five", "All flows", "All"). On the MATLAB specimen preset, default selection matches MATLAB's 5 states in order (`Pipe_1_Flow`, `Pipe_2_Flow`, `Pipe_1_R`, `Pipe_2_L`, `Pipe_2_R`). Changing selected states updates the figure instantly without re-running the simulation.
+
+---
+
+## 30. Total head option
+
+*(Not confirmed by the client)*
+
+**Decision**: A radio toggle "Pressure head | Total head (EPANET Head)" allows users to switch between gauge pressure head ($m$) and total hydraulic head ($m = \text{pressure head} + \text{elevation}$).
+- Flows ($Q$) are unaffected by the elevation shift.
+- Pressure states are adjusted by adding their associated node elevation ($J1$ elevation $= 5.0\text{ m}$ in the specimen network).
+- Y-axis labels dynamically update between `pressure head [m]` and `total head [m]`.
+
+---
+
+## 31. Dirac arrow height is 0.5 of the panel range (as in MATLAB)
+
+*(Not confirmed by the client)*
+
+**Decision**: In panels where a state exhibits a Dirac impulse ($|\text{coefficient}| > 10^{-9}$), an impulse arrow is drawn starting from the pre-switch DAE value with height $h = 0.5 \times (\text{y-range}) \times \text{sign}(\text{coefficient})$.
+- The arrow has a solid line (width 2.2) and a filled triangle marker (size 7, up for positive, down for negative).
+- An annotation box with white background is positioned at $t_s + 0.03 T, y = \text{base} + 0.62 h$, displaying signed coefficient and switch time: `DAE: Dirac ±XX.XX δ(t - t_s)\nEPANET: none`.
+- Panel y-limits are symmetrically scaled by a factor of 1.35 to guarantee the arrow and text never clip outside the axes bounds.
+
+---
+
+## 32. Graph canvas is always light
+
+*(Not confirmed by the client)*
+
+**Decision**: The network graph canvas (both `QGraphicsScene` and `QGraphicsView` viewport background) is explicitly assigned a clean white background (`#FFFFFF`), and pipes have a minimum cosmetic pen width of 2.0 px.
+- This ensures full visual contrast for pipes, direction arrows, labels, and valve symbols regardless of whether Windows is operating in Light or Dark theme.
+- Contrast ratio between pipe strokes and canvas background meets or exceeds WCAG AA standards ($\ge 4.5$, measured $\approx 12.6$).
+
+---
+
+## 33. CSV/PNG/.inp exports
+
+*(Not confirmed by the client)*
+
+**Decision**: Three export buttons are provided directly underneath the comparison plots:
+1. "Save figure...": exports high-resolution 200 DPI PNG (or PDF/SVG depending on chosen extension) with crisp white background.
+2. "Export data (CSV)...": writes a comprehensive CSV containing time, DAE, EPANET, and difference columns for all states sampled at EPANET's report times, along with a secondary `<basename>_impulses.csv` detailing impulse times, states, and coefficients.
+3. "Export EPANET input file (.inp)...": exports the exact INP text produced by `export_epanet` for the run snapshot, allowing independent validation and third-party EPANET simulation.
+- All file dialogs feature sensible default filenames, provide clear status messages on completion, and catch write errors cleanly with user-friendly error dialogs without application tracebacks.
+
 
 
 

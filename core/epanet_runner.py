@@ -430,3 +430,123 @@ def run_epanet(
 
         # Guarantee temporary folder cleanup
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def run_epanet_inp(inp_text_or_path: str, dae: Optional[Any] = None) -> None:
+    """Run EPANET engine directly on an INP text or file path to verify validity.
+
+    Raises EpanetError if parsing, opening, initializing, or running fails.
+    """
+    temp_dir = tempfile.mkdtemp(prefix="epanet_inp_check_")
+    ph = ctypes.c_void_p()
+    dll = None
+
+    try:
+        if os.path.isfile(inp_text_or_path):
+            inp_file = os.path.abspath(inp_text_or_path)
+        else:
+            inp_file = os.path.join(temp_dir, "input.inp")
+            with open(inp_file, "w", encoding="utf-8") as f:
+                f.write(inp_text_or_path)
+
+        rpt_file = os.path.join(temp_dir, "check.rpt")
+        out_file = os.path.join(temp_dir, "check.out")
+
+        dll_path = get_epanet_dll_path()
+        dll = ctypes.windll.LoadLibrary(dll_path)
+
+        dll.EN_createproject.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        dll.EN_createproject.restype = ctypes.c_int
+
+        dll.EN_deleteproject.argtypes = [ctypes.c_void_p]
+        dll.EN_deleteproject.restype = ctypes.c_int
+
+        dll.EN_open.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+        ]
+        dll.EN_open.restype = ctypes.c_int
+
+        dll.EN_close.argtypes = [ctypes.c_void_p]
+        dll.EN_close.restype = ctypes.c_int
+
+        dll.EN_geterror.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+        dll.EN_geterror.restype = ctypes.c_int
+
+        dll.EN_openH.argtypes = [ctypes.c_void_p]
+        dll.EN_openH.restype = ctypes.c_int
+
+        dll.EN_initH.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        dll.EN_initH.restype = ctypes.c_int
+
+        dll.EN_runH.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_long)]
+        dll.EN_runH.restype = ctypes.c_int
+
+        dll.EN_nextH.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_long)]
+        dll.EN_nextH.restype = ctypes.c_int
+
+        dll.EN_closeH.argtypes = [ctypes.c_void_p]
+        dll.EN_closeH.restype = ctypes.c_int
+
+        # 1. Create project
+        ret = dll.EN_createproject(ctypes.byref(ph))
+        if ret > 0:
+            raise EpanetError(ret, _get_epanet_error_message(dll, ret))
+
+        # 2. Open project
+        ret = dll.EN_open(
+            ph,
+            inp_file.encode("utf-8"),
+            rpt_file.encode("utf-8"),
+            out_file.encode("utf-8"),
+        )
+        if ret > 0:
+            raise EpanetError(ret, _get_epanet_error_message(dll, ret))
+
+        ret = dll.EN_openH(ph)
+        if ret >= 100:
+            raise EpanetError(ret, _get_epanet_error_message(dll, ret))
+
+        times_list: List[float] = []
+        try:
+            ret = dll.EN_initH(ph, 0)
+            if ret >= 100:
+                raise EpanetError(ret, _get_epanet_error_message(dll, ret))
+
+            t_val = ctypes.c_long()
+            tstep_val = ctypes.c_long()
+            while True:
+                ret = dll.EN_runH(ph, ctypes.byref(t_val))
+                if ret >= 100:
+                    raise EpanetError(ret, _get_epanet_error_message(dll, ret))
+                times_list.append(float(t_val.value))
+                ret = dll.EN_nextH(ph, ctypes.byref(tstep_val))
+                if ret >= 100:
+                    raise EpanetError(ret, _get_epanet_error_message(dll, ret))
+                if tstep_val.value <= 0:
+                    break
+        finally:
+            dll.EN_closeH(ph)
+
+        return EpanetResult(
+            t=np.array(times_list, dtype=float),
+            X=np.empty((len(times_list), 0), dtype=float),
+            labels=[],
+            engine_version=0,
+            inp_text=inp_text_or_path if isinstance(inp_text_or_path, str) else "",
+        )
+
+    finally:
+        if dll is not None and ph.value is not None:
+            try:
+                dll.EN_close(ph)
+            except Exception:
+                pass
+            try:
+                dll.EN_deleteproject(ph)
+            except Exception:
+                pass
+        shutil.rmtree(temp_dir, ignore_errors=True)
+

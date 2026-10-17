@@ -374,6 +374,29 @@ def run_selftest(log_path: Optional[Path] = None) -> int:
         assert window.comparison_tab.run_btn.isEnabled(), "Run button should be enabled for specimen"
         write_log("Comparison tab verified successfully.")
 
+        # 10. Offscreen comparison figure check (> 10 kB)
+        write_log("Testing comparison figure offscreen export (> 10 kB)...")
+        from core.comparison import run_comparison
+        from ui.comparison_plots import draw_comparison
+        from matplotlib.figure import Figure
+
+        res_comp = run_comparison(net_spec, sc2, settings)
+        fig_test = Figure(figsize=(7, 9), facecolor="white")
+        draw_comparison(fig_test, res_comp)
+
+        temp_plot_png = temp_dir / f"wnm_selftest_plot_{os.getpid()}.png"
+        fig_test.savefig(temp_plot_png, dpi=200, facecolor="white", bbox_inches="tight")
+        assert temp_plot_png.is_file(), f"Comparison plot PNG was not created: {temp_plot_png}"
+        plot_size = temp_plot_png.stat().st_size
+        write_log(f"Comparison plot PNG created: {plot_size} bytes (target > 10000 bytes)")
+        assert plot_size > 10000, f"Comparison plot PNG size {plot_size} bytes <= 10 kB"
+
+        try:
+            temp_plot_png.unlink()
+        except Exception:
+            pass
+        write_log("Comparison plot figure export verified successfully.")
+
         window.close()
         app.processEvents()
 

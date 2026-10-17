@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Comparison Plots & Differences Tab (`ui/comparison_plots.py`, `core/plotdata.py`, `ui/comparison_tab.py`)**:
+  - Comparison tab refactored with a horizontal `QSplitter` dividing the setup column (minimum width $\ge 430$ px) and the results area.
+  - Results area featuring full-width non-elided outdated warning banner and a 5-tab `QTabWidget`: "Plots", "Differences", "Equilibrium", "Dirac impulses", and "Parameters used".
+  - High-fidelity reproduction of MATLAB reference `comparisonFigure` with stacked panels, shared time axis, solid `#0072B2` DAE curves per mode interval, stepped `#D91A1A` EPANET trajectories, switch jump indicators, and vertical switch event guidelines.
+  - Dirac impulse indicators drawn with directed arrows ($h = 0.5 \times \text{range} \times \text{sign}(\text{coeff})$) and bold annotations with switch time and coefficients.
+  - Option bar with configurable state checklist (including "MATLAB five", "All flows", "All" presets), Pressure head vs Total head (EPANET Head) elevation shift toggle, and Dirac arrows toggle with instant redraw from cached result.
+  - Differences tab displaying linearly interpolated DAE samples compared directly against EPANET report times, formatted with 6 significant digits and clipboard copy (Ctrl+C).
+  - Export capabilities: high-res 200 DPI figure save (PNG/PDF/SVG), full simulation timeseries CSV export with auxiliary impulses CSV, and verbatim snapshot EPANET `.inp` file export.
 - **Comparison with EPANET Tab (`ui/comparison_tab.py`)**:
   - Dedicated 5th tab titled "Comparison with EPANET" placed immediately following existing views.
   - Live "Ready?" status box with green "Ready to compare" or red plain-language blocking problem bullet points updating on every change.
