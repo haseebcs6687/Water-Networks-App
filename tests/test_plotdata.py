@@ -12,6 +12,7 @@ from core.plotdata import (
     max_abs_difference_after_last_switch,
     impulse_arrows,
     engine_label,
+    decimate_series,
 )
 
 
@@ -138,3 +139,47 @@ def test_impulse_arrows_scenarios():
 def test_engine_label(specimen_res_sc1):
     lbl = engine_label(specimen_res_sc1)
     assert "real EPANET 2.3.5" in lbl
+
+
+def test_decimation_preserves_extrema_and_boundaries():
+    # 1. Test with synthetic signal containing prominent peaks and sharp valleys
+    n = 20000
+    t = np.linspace(0.0, 100.0, n)
+    y = np.sin(t) * np.exp(-t / 50.0)
+    # Inject extreme spike at an arbitrary index
+    y[5432] = 999.0
+    y[12345] = -888.0
+
+    t_dec, y_dec = decimate_series(t, y, max_points=2000)
+    assert len(t_dec) <= 2000
+    # First and last points preserved exactly
+    assert t_dec[0] == t[0]
+    assert y_dec[0] == y[0]
+    assert t_dec[-1] == t[-1]
+    assert y_dec[-1] == y[-1]
+    # Extreme values preserved exactly
+    assert np.max(y_dec) == 999.0
+    assert np.min(y_dec) == -888.0
+
+    # 2. Test with real Scenario 3 specimen data across all mode segments
+    net, pos = specimen_network()
+    phys = specimen_physics()
+    res3 = run_comparison(net, specimen_scenario(3), phys, positions=pos)
+
+    # For each state in default states, check every segment
+    for st in default_states(res3):
+        dae_segs, jumps, _ = series(res3, st, kind="pressure")
+        for t_seg, y_seg in dae_segs:
+            if len(t_seg) <= 4000:
+                continue
+            t_dec, y_dec = decimate_series(t_seg, y_seg, max_points=4000)
+            assert len(t_dec) <= 4000
+            # Boundary values preserved
+            assert t_dec[0] == t_seg[0]
+            assert y_dec[0] == y_seg[0]
+            assert t_dec[-1] == t_seg[-1]
+            assert y_dec[-1] == y_seg[-1]
+            # Extrema preserved
+            assert np.min(y_dec) == pytest.approx(np.min(y_seg), rel=1e-12)
+            assert np.max(y_dec) == pytest.approx(np.max(y_seg), rel=1e-12)
+

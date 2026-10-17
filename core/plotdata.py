@@ -136,6 +136,73 @@ def series(
     return dae_segments, jump_pairs, (t_ep, y_ep)
 
 
+def decimate_series(
+    t: np.ndarray,
+    y: np.ndarray,
+    max_points: int = 4000,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Min-max envelope decimation for 2D line plotting.
+
+    Reduces high-density series to at most `max_points` while strictly
+    preserving:
+    - The first sample (t[0], y[0])
+    - The last sample (t[-1], y[-1])
+    - The local minimum and maximum in each bucket, guaranteeing that global
+      extrema and sharp spikes are preserved without clipping or attenuation.
+
+    Parameters
+    ----------
+    t : np.ndarray
+        Monotonically increasing time values.
+    y : np.ndarray
+        State trajectory values.
+    max_points : int, optional
+        Maximum number of points in decimated output (default 4000).
+
+    Returns
+    -------
+    t_dec, y_dec : tuple of np.ndarray
+        Decimated time and value arrays.
+    """
+    n = len(t)
+    if n <= max_points or max_points < 4:
+        return t, y
+
+    # Reserve 2 points for boundaries (0 and n-1) and 2 for remainder bucket
+    n_buckets = max(1, (max_points - 4) // 2)
+    interior_len = n - 2
+    bucket_len = interior_len // n_buckets
+    if bucket_len < 2:
+        return t, y
+
+    usable_len = n_buckets * bucket_len
+    y_int = y[1:1 + usable_len]
+    y_2d = y_int.reshape(n_buckets, bucket_len)
+
+    min_idx = np.argmin(y_2d, axis=1)
+    max_idx = np.argmax(y_2d, axis=1)
+
+    base = np.arange(n_buckets, dtype=np.int64) * bucket_len + 1
+    pos_min = base + min_idx
+    pos_max = base + max_idx
+
+    indices = [0, pos_min, pos_max]
+
+    rem = interior_len - usable_len
+    if rem > 0:
+        rem_slice = y[1 + usable_len:n - 1]
+        indices.append([
+            1 + usable_len + int(np.argmin(rem_slice)),
+            1 + usable_len + int(np.argmax(rem_slice)),
+        ])
+
+    indices.append([n - 1])
+    all_indices = np.concatenate([np.atleast_1d(x) for x in indices])
+    chosen = np.unique(all_indices)
+    return t[chosen], y[chosen]
+
+
+
 def _strictly_increasing_dae_time_series(
     result: ComparisonResult,
 ) -> Tuple[np.ndarray, np.ndarray]:

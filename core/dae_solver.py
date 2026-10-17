@@ -8,6 +8,7 @@ hydraulic networks with switching valves.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Union
 
@@ -471,6 +472,9 @@ def _ode45_dp54(
             y_steps.append(y_cur)
             f_steps.append(k[6])
 
+            if len(t_steps) % 200 == 0:
+                time.sleep(0)
+
             if t_cur >= t1:
                 break
 
@@ -647,6 +651,8 @@ def simulate(
             X_piece = np.zeros((npts, model.K), dtype=float)
 
             for i, st in enumerate(tt):
+                if i % 1000 == 0:
+                    time.sleep(0)
                 idx = int(np.searchsorted(t_steps_arr, st))
                 if idx == 0:
                     v_val = v_steps[0]

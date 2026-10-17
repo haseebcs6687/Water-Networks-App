@@ -58,14 +58,14 @@ def wait_for_comparison(tab, timeout_s=60.0):
     """Wait for background ComparisonWorker to finish."""
     t0 = time.time()
     # Give worker a moment to start
-    for _ in range(5):
+    for _ in range(50):
         QApplication.processEvents()
-        QTest.qWait(10)
+        time.sleep(0.005)
         if tab.is_running:
             break
     while tab.is_running:
         QApplication.processEvents()
-        QTest.qWait(50)
+        time.sleep(0.005)
         if time.time() - t0 > timeout_s:
             raise TimeoutError(f"Comparison run timed out after {timeout_s} seconds")
     QApplication.processEvents()
@@ -470,3 +470,41 @@ def test_10_earlier_tests_and_selftest():
     from main import run_selftest
     ret = run_selftest()
     assert ret == 0, f"Selftest failed with exit code {ret}"
+
+
+def test_11_scenario3_click_to_visible_and_single_draw(qapp, monkeypatch):
+    """11. Regression test: Scenario 3 through real UI path offscreen has click-to-visible < 10 s
+    and draw_comparison is called exactly once per run.
+    """
+    from ui import comparison_plots
+
+    draw_calls = []
+    orig_draw = comparison_plots.draw_comparison
+
+    def tracked_draw(*args, **kwargs):
+        draw_calls.append(time.perf_counter())
+        return orig_draw(*args, **kwargs)
+
+    monkeypatch.setattr(comparison_plots, "draw_comparison", tracked_draw)
+
+    window = MainWindow()
+    window._on_load_specimen_example()
+    window.show()
+    tab = window.comparison_tab
+
+    # Preset 3 is Scenario 3 (longest scenario: 400 s)
+    tab.preset_combo.setCurrentIndex(3)
+    QApplication.processEvents()
+
+    draw_calls.clear()
+    t_start = time.perf_counter()
+    tab.run_comparison_action()
+    wait_for_comparison(tab, timeout_s=30.0)
+    t_end = time.perf_counter()
+
+    elapsed = t_end - t_start
+    assert elapsed < 10.0, f"Click-to-visible took {elapsed:.2f} s (expected < 10 s)"
+    assert len(draw_calls) == 1, f"draw_comparison called {len(draw_calls)} times (expected 1)"
+
+    window.close()
+

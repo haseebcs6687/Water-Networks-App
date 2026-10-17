@@ -1001,9 +1001,17 @@ class ComparisonTab(QWidget):
         self.status_label.setStyleSheet("color: green;")
         self.status_label.setText(f"Comparison completed successfully (DAE: {t_dae:.3f}s, EPANET: {t_ep:.3f}s).")
 
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
+
         self._populate_results(result)
+        QApplication.processEvents()
+
         self.results_tabs.setCurrentWidget(self.plots_widget)
+        QApplication.processEvents()
+
         self.refresh()
+        QApplication.processEvents()
 
     def _on_run_error(self, err_msg: str):
         """Handle error from comparison run."""
@@ -1027,129 +1035,143 @@ class ComparisonTab(QWidget):
 
     def _populate_results(self, res: ComparisonResult):
         """Fill all results tables from ComparisonResult."""
+        from PySide6.QtWidgets import QApplication
+
         # 1. Plots Widget
         self.plots_widget.set_result(res)
+        QApplication.processEvents()
 
-        # 2. Differences Table
-        d_rows = difference_rows(res)
-        self.diff_table.setRowCount(len(d_rows))
-        for r, (t_val, s_lbl, dae_val, ep_val, diff_val) in enumerate(d_rows):
-            it_t = QTableWidgetItem(f"{t_val:.6g}")
-            it_t.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.diff_table.setItem(r, 0, it_t)
+        tables = [self.diff_table, self.params_table, self.eq_table, self.imp_table]
+        for tbl in tables:
+            tbl.setUpdatesEnabled(False)
+            tbl.blockSignals(True)
 
-            self.diff_table.setItem(r, 1, QTableWidgetItem(s_lbl))
+        try:
+            # 2. Differences Table
+            d_rows = difference_rows(res)
+            self.diff_table.setRowCount(len(d_rows))
+            for r, (t_val, s_lbl, dae_val, ep_val, diff_val) in enumerate(d_rows):
+                it_t = QTableWidgetItem(f"{t_val:.6g}")
+                it_t.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.diff_table.setItem(r, 0, it_t)
 
-            it_dae = QTableWidgetItem(f"{dae_val:.6g}")
-            it_dae.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.diff_table.setItem(r, 2, it_dae)
+                self.diff_table.setItem(r, 1, QTableWidgetItem(s_lbl))
 
-            it_ep = QTableWidgetItem(f"{ep_val:.6g}")
-            it_ep.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.diff_table.setItem(r, 3, it_ep)
+                it_dae = QTableWidgetItem(f"{dae_val:.6g}")
+                it_dae.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.diff_table.setItem(r, 2, it_dae)
 
-            it_diff = QTableWidgetItem(f"{diff_val:.6g}")
-            it_diff.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.diff_table.setItem(r, 4, it_diff)
+                it_ep = QTableWidgetItem(f"{ep_val:.6g}")
+                it_ep.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.diff_table.setItem(r, 3, it_ep)
 
-        max_d = max_abs_difference_after_last_switch(res)
-        if res.scenario.events:
-            self.diff_summary_label.setText(
-                f"After the last switch the largest difference is {max_d:.2e} (they coincide)."
-            )
-        else:
-            self.diff_summary_label.setText(f"Largest difference across run: {max_d:.2e}")
+                it_diff = QTableWidgetItem(f"{diff_val:.6g}")
+                it_diff.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.diff_table.setItem(r, 4, it_diff)
 
-        # 3. Parameters Table
-        self.params_table.setRowCount(len(res.params))
-        for r, (el, p_name, val, unit) in enumerate(res.params):
-            self.params_table.setItem(r, 0, QTableWidgetItem(el))
-            self.params_table.setItem(r, 1, QTableWidgetItem(p_name))
-            self.params_table.setItem(r, 2, QTableWidgetItem(val))
-            self.params_table.setItem(r, 3, QTableWidgetItem(unit))
-
-        # 4. Equilibrium Comparison Table
-        self.eq_table.setRowCount(len(res.equilibrium))
-        intervals_summary: Dict[str, Dict[str, float]] = {}
-
-        for r, row in enumerate(res.equilibrium):
-            inv = row["interval"]
-            if inv not in intervals_summary:
-                intervals_summary[inv] = {
-                    "max_flow_end": 0.0,
-                    "max_head_end": 0.0,
-                    "max_flow_eq": 0.0,
-                    "max_head_eq": 0.0,
-                }
-
-            self.eq_table.setItem(r, 0, QTableWidgetItem(row["interval"]))
-            self.eq_table.setItem(r, 1, QTableWidgetItem(row["mode"]))
-            self.eq_table.setItem(r, 2, QTableWidgetItem(row["label"]))
-
-            it_dae_end = QTableWidgetItem(f"{row.get('dae_end', row.get('dae', 0.0)):.6g}")
-            it_dae_end.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.eq_table.setItem(r, 3, it_dae_end)
-
-            it_dae_eq = QTableWidgetItem(f"{row.get('dae_eq', 0.0):.6g}")
-            it_dae_eq.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.eq_table.setItem(r, 4, it_dae_eq)
-
-            it_ep = QTableWidgetItem(f"{row['epanet']:.6g}")
-            it_ep.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.eq_table.setItem(r, 5, it_ep)
-
-            diff_end_val = row.get("diff_end", row.get("diff", 0.0))
-            it_diff_end = QTableWidgetItem(f"{diff_end_val:.6g}")
-            it_diff_end.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.eq_table.setItem(r, 6, it_diff_end)
-
-            diff_eq_val = row.get("diff_eq", 0.0)
-            it_diff_eq = QTableWidgetItem(f"{diff_eq_val:.6g}")
-            it_diff_eq.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.eq_table.setItem(r, 7, it_diff_eq)
-
-            lbl = row["label"].lower()
-            if "flow" in lbl:
-                intervals_summary[inv]["max_flow_end"] = max(intervals_summary[inv]["max_flow_end"], diff_end_val)
-                intervals_summary[inv]["max_flow_eq"] = max(intervals_summary[inv]["max_flow_eq"], diff_eq_val)
+            max_d = max_abs_difference_after_last_switch(res)
+            if res.scenario.events:
+                self.diff_summary_label.setText(
+                    f"After the last switch the largest difference is {max_d:.2e} (they coincide)."
+                )
             else:
-                intervals_summary[inv]["max_head_end"] = max(intervals_summary[inv]["max_head_end"], diff_end_val)
-                intervals_summary[inv]["max_head_eq"] = max(intervals_summary[inv]["max_head_eq"], diff_eq_val)
+                self.diff_summary_label.setText(f"Largest difference across run: {max_d:.2e}")
 
-        summary_parts = []
-        for inv, s in intervals_summary.items():
-            inv_short = inv.split()[0] if " " in inv else inv
-            summary_parts.append(
-                f"{inv_short}: End diff (Flow: {s['max_flow_end']:.2e}, Head: {s['max_head_end']:.2e}) | "
-                f"Eq diff (Flow: {s['max_flow_eq']:.2e}, Head: {s['max_head_eq']:.2e})"
-            )
-        self.eq_summary_label.setText("Max differences per interval: " + " ; ".join(summary_parts))
+            # 3. Parameters Table
+            self.params_table.setRowCount(len(res.params))
+            for r, (el, p_name, val, unit) in enumerate(res.params):
+                self.params_table.setItem(r, 0, QTableWidgetItem(el))
+                self.params_table.setItem(r, 1, QTableWidgetItem(p_name))
+                self.params_table.setItem(r, 2, QTableWidgetItem(val))
+                self.params_table.setItem(r, 3, QTableWidgetItem(unit))
 
-        # 5. Dirac Impulses Table
-        self.imp_table.setRowCount(len(res.impulses))
-        for r, imp in enumerate(res.impulses):
-            it_t = QTableWidgetItem(f"{imp['time']:.6g}")
-            it_t.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.imp_table.setItem(r, 0, it_t)
+            # 4. Equilibrium Comparison Table
+            self.eq_table.setRowCount(len(res.equilibrium))
+            intervals_summary: Dict[str, Dict[str, float]] = {}
 
-            lbl_display = f"{imp['state']} ({imp.get('state_index', '')})" if imp.get('state_index') else imp['state']
-            self.imp_table.setItem(r, 1, QTableWidgetItem(lbl_display))
+            for r, row in enumerate(res.equilibrium):
+                inv = row["interval"]
+                if inv not in intervals_summary:
+                    intervals_summary[inv] = {
+                        "max_flow_end": 0.0,
+                        "max_head_end": 0.0,
+                        "max_flow_eq": 0.0,
+                        "max_head_eq": 0.0,
+                    }
 
-            it_c = QTableWidgetItem(f"{imp['coefficient']:+.6g}")
-            it_c.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.imp_table.setItem(r, 2, it_c)
+                self.eq_table.setItem(r, 0, QTableWidgetItem(row["interval"]))
+                self.eq_table.setItem(r, 1, QTableWidgetItem(row["mode"]))
+                self.eq_table.setItem(r, 2, QTableWidgetItem(row["label"]))
 
-            it_ep = QTableWidgetItem("EPANET: none")
-            self.imp_table.setItem(r, 3, it_ep)
+                it_dae_end = QTableWidgetItem(f"{row.get('dae_end', row.get('dae', 0.0)):.6g}")
+                it_dae_end.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.eq_table.setItem(r, 3, it_dae_end)
 
-        if not res.impulses:
-            self.imp_summary_label.setText("No Dirac impulses occurred during switching. (EPANET: none)")
-        else:
-            self.imp_summary_label.setText(f"{len(res.impulses)} Dirac impulse entries at switching instants. (EPANET: none)")
+                it_dae_eq = QTableWidgetItem(f"{row.get('dae_eq', 0.0):.6g}")
+                it_dae_eq.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.eq_table.setItem(r, 4, it_dae_eq)
 
-        # Format columns of all results tables to fit content without clipping headers
-        for tbl in [self.diff_table, self.params_table, self.eq_table, self.imp_table]:
-            format_table(tbl)
+                it_ep = QTableWidgetItem(f"{row['epanet']:.6g}")
+                it_ep.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.eq_table.setItem(r, 5, it_ep)
+
+                diff_end_val = row.get("diff_end", row.get("diff", 0.0))
+                it_diff_end = QTableWidgetItem(f"{diff_end_val:.6g}")
+                it_diff_end.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.eq_table.setItem(r, 6, it_diff_end)
+
+                diff_eq_val = row.get("diff_eq", 0.0)
+                it_diff_eq = QTableWidgetItem(f"{diff_eq_val:.6g}")
+                it_diff_eq.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.eq_table.setItem(r, 7, it_diff_eq)
+
+                lbl = row["label"].lower()
+                if "flow" in lbl:
+                    intervals_summary[inv]["max_flow_end"] = max(intervals_summary[inv]["max_flow_end"], diff_end_val)
+                    intervals_summary[inv]["max_flow_eq"] = max(intervals_summary[inv]["max_flow_eq"], diff_eq_val)
+                else:
+                    intervals_summary[inv]["max_head_end"] = max(intervals_summary[inv]["max_head_end"], diff_end_val)
+                    intervals_summary[inv]["max_head_eq"] = max(intervals_summary[inv]["max_head_eq"], diff_eq_val)
+
+            summary_parts = []
+            for inv, s in intervals_summary.items():
+                inv_short = inv.split()[0] if " " in inv else inv
+                summary_parts.append(
+                    f"{inv_short}: End diff (Flow: {s['max_flow_end']:.2e}, Head: {s['max_head_end']:.2e}) | "
+                    f"Eq diff (Flow: {s['max_flow_eq']:.2e}, Head: {s['max_head_eq']:.2e})"
+                )
+            self.eq_summary_label.setText("Max differences per interval: " + " ; ".join(summary_parts))
+
+            # 5. Dirac Impulses Table
+            self.imp_table.setRowCount(len(res.impulses))
+            for r, imp in enumerate(res.impulses):
+                it_t = QTableWidgetItem(f"{imp['time']:.6g}")
+                it_t.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.imp_table.setItem(r, 0, it_t)
+
+                lbl_display = f"{imp['state']} ({imp.get('state_index', '')})" if imp.get('state_index') else imp['state']
+                self.imp_table.setItem(r, 1, QTableWidgetItem(lbl_display))
+
+                it_c = QTableWidgetItem(f"{imp['coefficient']:+.6g}")
+                it_c.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.imp_table.setItem(r, 2, it_c)
+
+                it_ep = QTableWidgetItem("EPANET: none")
+                self.imp_table.setItem(r, 3, it_ep)
+
+            if not res.impulses:
+                self.imp_summary_label.setText("No Dirac impulses occurred during switching. (EPANET: none)")
+            else:
+                self.imp_summary_label.setText(f"{len(res.impulses)} Dirac impulse entries at switching instants. (EPANET: none)")
+
+            # Format columns of all results tables to fit content without clipping headers while updates disabled
+            for tbl in tables:
+                format_table(tbl)
+
+        finally:
+            for tbl in tables:
+                tbl.blockSignals(False)
+                tbl.setUpdatesEnabled(True)
 
     def stop_worker(self):
         """Wait for worker thread to finish if running (called during window close)."""

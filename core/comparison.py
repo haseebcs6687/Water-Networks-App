@@ -23,6 +23,7 @@ from core.epanet_export import export_epanet, ScenarioError
 from core.plotdata import (
     default_states,
     series,
+    decimate_series,
     difference_rows,
     max_abs_difference_after_last_switch,
     impulse_arrows,

@@ -43,6 +43,7 @@ from core.comparison import ComparisonResult
 from core.plotdata import (
     default_states,
     series,
+    decimate_series,
     impulse_arrows,
     engine_label,
 )
@@ -134,7 +135,15 @@ def draw_comparison(
 
     axes = fig.subplots(nrows=n_panels, ncols=1, sharex=True, squeeze=False)[:, 0]
 
+    from PySide6.QtWidgets import QApplication
+    _app = QApplication.instance()
+    if _app is not None:
+        _app.processEvents()
+
     for r, lbl in enumerate(selected):
+        if _app is not None:
+            _app.processEvents()
+
         ax = axes[r]
         ax.set_facecolor("white")
         ax.grid(True, alpha=0.12, color="gray", linestyle="-")
@@ -151,9 +160,10 @@ def draw_comparison(
 
         dae_segs, jumps, ep_data = series(result, lbl, kind=head_mode)
 
-        # 1. DAE segments (one per mode, solid line)
+        # 1. DAE segments (one per mode, solid line, decimated to <= 4000 pts for drawing only)
         for tk, yk in dae_segs:
-            ax.plot(tk, yk, "-", color=cD, linewidth=1.6)
+            t_plot, y_plot = decimate_series(tk, yk, max_points=4000)
+            ax.plot(t_plot, y_plot, "-", color=cD, linewidth=1.6)
 
         # 2. Dotted jump line and vertical switch line
         for ts, y_before, y_after in jumps:
