@@ -287,6 +287,8 @@ These decisions were made while implementing the v2.0 switched-DAE comparison fe
 
 **Decision**: The application runs the official real EPANET engine using Python's standard `ctypes` library directly on the pre-compiled C dynamic library `epanet2.dll` (Open Water Analytics / EPA EPANET 2.3.5, version code `20305`).
 
+- **Provenance**: Extracted from `epyt` wheel package (version 1.0.9, path `epyt/libraries/win/epanet2.dll`), upstream C repository `https://github.com/OpenWaterAnalytics/EPANET`.
+- **SHA-256**: `0FEC08B4BA0320A08E821E4E79ED380CE09AA926867A2B1D33E878B6159C02FA` (464,896 bytes, Windows x64).
 - **License**: MIT License (OWA EPANET 2.2+) and Public Domain (US EPA EPANET 2.0). License text is MIT/Public Domain, fully compatible with commercial distribution and offline bundled executables.
 - **Python dependencies**: 0 new pip packages added (no pandas, no scipy, no wntr; numpy-only on the Python side).
 - **Executable packaging**: `epanet2.dll` adds only 454 KB to the PyInstaller distribution. It operates 100% offline at runtime without requiring Python or administrative rights.
