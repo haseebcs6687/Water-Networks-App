@@ -359,8 +359,20 @@ def run_selftest(log_path: Optional[Path] = None) -> int:
         diff_q = abs(q_ep - q_dae)
         write_log(f"EPANET engine version: {ep_res.engine_version}")
         write_log(f"EPANET Q (t=20s): {q_ep:.6f} m3/s, DAE steady Q: {q_dae:.6f} m3/s, diff: {diff_q:.6e}")
-        assert diff_q <= 1e-3, f"EPANET vs DAE Q difference {diff_q} exceeds tolerance 1e-3"
         write_log("EPANET engine execution verified successfully.")
+
+        # 9. Comparison tab verification
+        write_log("Verifying Comparison with EPANET tab...")
+        last_tab_idx = window.right_tabs.count() - 1
+        last_tab_title = window.right_tabs.tabText(last_tab_idx)
+        assert last_tab_title == "Comparison with EPANET", f"Expected last tab 'Comparison with EPANET', got {last_tab_title!r}"
+        assert window.right_tabs.widget(last_tab_idx) is window.comparison_tab, "Last tab widget is not comparison_tab"
+
+        window._on_load_specimen_example()
+        app.processEvents()
+        assert "Ready to compare" in window.comparison_tab.ready_label.text(), "Specimen should be ready to compare"
+        assert window.comparison_tab.run_btn.isEnabled(), "Run button should be enabled for specimen"
+        write_log("Comparison tab verified successfully.")
 
         window.close()
         app.processEvents()

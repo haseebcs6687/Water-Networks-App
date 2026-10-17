@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **Real EPANET Engine Runner (`core/epanet_runner.py`)**:
+- **Comparison with EPANET Tab (`ui/comparison_tab.py`)**:
+  - Dedicated 5th tab titled "Comparison with EPANET" placed immediately following existing views.
+  - Live "Ready?" status box with green "Ready to compare" or red plain-language blocking problem bullet points updating on every change.
+  - Interactive "Valves" table configuring valves at pipe start and end boundaries, with pump pipes safely disabled.
+  - Scenario configuration editor with presets for MATLAB specimens 1 to 5, explicit $V_1/V_2$ valve mapping indicators, whole-second switching event tables with Add/Remove buttons, and end time controls.
+  - Physics settings supporting Constant friction factor, Swamee-Jain, and Darcy-Weisbach models, with collapsed advanced controls for gravity $g$ and kinematic viscosity $\nu$.
+  - Thread-safe background execution in worker `QThread` with progress bar, responsive UI, disablement against double-clicks, and safe application shutdown.
+  - Comprehensive results presentation: Parameters used table, Equilibrium comparison table with DAE vs EPANET deltas and maximum differences summary, and Dirac impulses table displaying impulse coefficients alongside "EPANET: none".
+  - Outdated warning banner ("Network or settings changed since this result - run again") appearing whenever changes invalidate prior results.
+- **Interactive Valve Symbols & Graph Visualization (`ui/graph_view.py`)**:
+  - Bow-tie valve symbols rendered at pipe boundaries where valves exist, tracking node movement and live pipe bending curves.
+  - Non-interfering hit-testing forwarding selection to the parent pipe, informative tooltips, inclusion in exported images, and "Valve" entry in the pinned legend.
+- **Project Persistence & Examples (`core/io.py`, `core/examples.py`, `ui/main_window.py`)**:
+  - Full `.wnet` v2 persistence for valve flags, scenarios, and physics settings while maintaining full backward compatibility with v1 and v2 files lacking scenarios.
+  - New menu entry `File > Load Example > Specimen with valves (EPANET comparison)` loading the 3-node, 2-pipe specimen network with valves and scenario 1.
+- **Comparison Coordinator (`core/comparison.py`)**:
+  - `problems()` check, `parameters_table()` generator, and `run_comparison()` executing on isolated network snapshots with SHA-256 signature tracking.
   - Direct execution of the official EPANET 2.3.5 / 2.2+ engine via standard `ctypes` on standalone `core/lib/epanet2.dll` (MIT License / Public Domain).
   - Project handle API lifecycle (`EN_createproject`, `EN_open`, `EN_openH`, `EN_initH`, `EN_runH`, `EN_nextH`, `EN_closeH`, `EN_close`, `EN_deleteproject`) ensuring thread-safe execution in worker threads with zero state leaks.
   - Generates `EpanetResult` containing simulation times, state trajectories `X` formatted in identical column ordering to the DAE solver (flows, then pressure heads), state labels, engine version, input text, and translated warning strings.

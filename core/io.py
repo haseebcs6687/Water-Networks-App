@@ -10,6 +10,7 @@ from typing import Dict, Tuple, Optional, Any, List
 
 from core.models import Network
 from core.scenario import Scenario
+from core.physics import PhysicsSettings
 
 
 SUPPORTED_FORMAT = "water-network"
@@ -19,12 +20,13 @@ SUPPORTED_VERSIONS = {1, 2}
 
 @dataclass
 class ProjectData:
-    """Container for fully loaded project data including network, positions, edge bends, and scenario."""
+    """Container for fully loaded project data including network, positions, edge bends, scenario, and physics."""
 
     network: Network
     positions: Dict[str, Tuple[float, float]]
     edge_bends: Dict[str, float]
     scenario: Optional[Scenario] = None
+    physics: Optional[PhysicsSettings] = None
 
 
 def save_project(
@@ -33,8 +35,9 @@ def save_project(
     positions: Optional[Dict[str, Tuple[float, float]]] = None,
     edge_bends: Optional[Dict[str, float]] = None,
     scenario: Optional[Scenario] = None,
+    physics: Optional[PhysicsSettings] = None,
 ) -> None:
-    """Save a network and optional canvas node positions, edge bends, and scenario to a JSON file.
+    """Save a network and optional canvas node positions, edge bends, scenario, and physics to a JSON file.
 
     Parameters
     ----------
@@ -48,6 +51,8 @@ def save_project(
         Mapping of pipe IDs to dimensionless bend ratios.
     scenario : Scenario, optional
         Valve switching scenario.
+    physics : PhysicsSettings, optional
+        Fluid properties and calculation settings.
     """
     path = Path(path)
     data = network.to_dict()
@@ -77,6 +82,14 @@ def save_project(
 
     if scenario is not None:
         payload["scenario"] = scenario.to_dict() if hasattr(scenario, "to_dict") else scenario
+
+    if physics is not None:
+        payload["physics"] = {
+            "friction_mode": str(physics.friction_mode),
+            "friction_factor": float(physics.friction_factor),
+            "nu": float(physics.nu),
+            "g": float(physics.g),
+        }
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
@@ -197,11 +210,32 @@ def load_project_full(path: str | Path) -> ProjectData:
         else:
             raise ValueError("Invalid project file: 'scenario' must be an object.")
 
+    # Parse physics
+    physics = None
+    raw_physics = payload.get("physics")
+    if raw_physics is not None:
+        if not isinstance(raw_physics, dict):
+            raise ValueError("Invalid project file: 'physics' must be an object.")
+        try:
+            f_mode = raw_physics.get("friction_mode", "constant")
+            f_fac = raw_physics.get("friction_factor", 0.02)
+            nu_val = raw_physics.get("nu", 1.0219e-6)
+            g_val = raw_physics.get("g", 32.2 * 0.3048)
+            physics = PhysicsSettings(
+                friction_mode=str(f_mode),
+                friction_factor=float(f_fac),
+                nu=float(nu_val),
+                g=float(g_val),
+            )
+        except Exception as e:
+            raise ValueError(f"Invalid physics configuration in project file: {e}") from e
+
     return ProjectData(
         network=net,
         positions=positions,
         edge_bends=edge_bends,
         scenario=scenario,
+        physics=physics,
     )
 
 

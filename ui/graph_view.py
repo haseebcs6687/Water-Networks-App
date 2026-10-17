@@ -270,6 +270,44 @@ class BendHandleItem(QGraphicsItem):
             super().mouseDoubleClickEvent(event)
 
 
+class ValveSymbolItem(QGraphicsItem):
+    """Small bow-tie valve symbol near a pipe end."""
+
+    def __init__(self, pipe_item: "PipeItem", end_name: str, parent=None):
+        super().__init__(parent or pipe_item)
+        self.pipe_item = pipe_item
+        self.end_name = end_name
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        self.setZValue(15)
+        self.setAcceptHoverEvents(True)
+        self.setToolTip(f"Valve at {end_name} of {pipe_item.pipe_id}")
+        self.angle_deg = 0.0
+
+    def boundingRect(self) -> QRectF:
+        return QRectF(-10, -10, 20, 20)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.save()
+        painter.rotate(self.angle_deg)
+        painter.setPen(QPen(QColor("#222222"), 1.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        left_poly = QPolygonF([QPointF(-6, -4.5), QPointF(0, 0), QPointF(-6, 4.5)])
+        right_poly = QPolygonF([QPointF(6, -4.5), QPointF(0, 0), QPointF(6, 4.5)])
+        painter.drawPolygon(left_poly)
+        painter.drawPolygon(right_poly)
+        painter.restore()
+
+    def mousePressEvent(self, event):
+        self.pipe_item.mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        self.pipe_item.mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self.pipe_item.mouseReleaseEvent(event)
+
+
 class PipeItem(QGraphicsItem):
     """Directed pipe item stopping at node boundaries with arrow, curve, and live bend handle."""
 
@@ -285,6 +323,8 @@ class PipeItem(QGraphicsItem):
         curvature: float = 0.0,
         bend_ratio: float = 0.0,
         graph_view: Optional["GraphView"] = None,
+        valve_start: bool = False,
+        valve_end: bool = False,
         parent=None,
     ):
         super().__init__(parent)
@@ -311,6 +351,11 @@ class PipeItem(QGraphicsItem):
         self._pipe_pressed = False
         self._pipe_press_scene = QPointF()
         self._initial_drag_bend = 0.0
+
+        self.valve_start = valve_start
+        self.valve_end = valve_end
+        self.valve_start_item = ValveSymbolItem(self, "start") if valve_start else None
+        self.valve_end_item = ValveSymbolItem(self, "end") if valve_end else None
 
         self.handle_item = BendHandleItem(self)
         self._build_geometry()
@@ -417,6 +462,39 @@ class PipeItem(QGraphicsItem):
             tw + 8,
             th + 4,
         )
+
+        if hasattr(self, "valve_start_item") and self.valve_start_item:
+            v_pt = self.path.pointAtPercent(0.08)
+            self.valve_start_item.setPos(v_pt)
+            p_prev = self.path.pointAtPercent(0.06)
+            p_next = self.path.pointAtPercent(0.10)
+            self.valve_start_item.angle_deg = math.degrees(math.atan2(p_next.y() - p_prev.y(), p_next.x() - p_prev.x()))
+
+        if hasattr(self, "valve_end_item") and self.valve_end_item:
+            v_pt = self.path.pointAtPercent(0.88)
+            self.valve_end_item.setPos(v_pt)
+            p_prev = self.path.pointAtPercent(0.86)
+            p_next = self.path.pointAtPercent(0.90)
+            self.valve_end_item.angle_deg = math.degrees(math.atan2(p_next.y() - p_prev.y(), p_next.x() - p_prev.x()))
+
+    def set_valves(self, valve_start: bool, valve_end: bool):
+        self.valve_start = valve_start
+        self.valve_end = valve_end
+        if valve_start and self.valve_start_item is None:
+            self.valve_start_item = ValveSymbolItem(self, "start")
+        elif not valve_start and self.valve_start_item is not None:
+            if self.scene():
+                self.scene().removeItem(self.valve_start_item)
+            self.valve_start_item = None
+
+        if valve_end and self.valve_end_item is None:
+            self.valve_end_item = ValveSymbolItem(self, "end")
+        elif not valve_end and self.valve_end_item is not None:
+            if self.scene():
+                self.scene().removeItem(self.valve_end_item)
+            self.valve_end_item = None
+        self._build_geometry()
+        self.update()
 
     def hoverEnterEvent(self, event):
         self._is_hovered = True
@@ -631,13 +709,13 @@ class LegendItem(QGraphicsItem):
         self.setZValue(100)
 
     def boundingRect(self) -> QRectF:
-        return QRectF(0, 0, 120, 130)
+        return QRectF(0, 0, 120, 155)
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(QPen(QColor("#CCCCCC"), 1))
         painter.setBrush(QBrush(QColor(255, 255, 255, 230)))
-        painter.drawRoundedRect(0, 0, 120, 130, 4, 4)
+        painter.drawRoundedRect(0, 0, 120, 155, 4, 4)
 
         font = QFont("Segoe UI", 8)
         painter.setFont(font)
@@ -648,6 +726,7 @@ class LegendItem(QGraphicsItem):
             ("Reservoir", QColor("#FA8072"), "node"),
             ("Pipe", QColor("#333333"), "pipe"),
             ("Pump", QColor("#DC143C"), "pump"),
+            ("Valve", QColor("#333333"), "valve"),
         ]
 
         y = 10
@@ -662,6 +741,13 @@ class LegendItem(QGraphicsItem):
             elif kind == "pump":
                 painter.setPen(QPen(color, 2, Qt.DashLine))
                 painter.drawLine(8, y + 7, 26, y + 7)
+            elif kind == "valve":
+                painter.setPen(QPen(QColor("#222222"), 1.2))
+                painter.setBrush(QBrush(QColor("#FFFFFF")))
+                lp = QPolygonF([QPointF(11, y + 4), QPointF(17, y + 7), QPointF(11, y + 10)])
+                rp = QPolygonF([QPointF(23, y + 4), QPointF(17, y + 7), QPointF(23, y + 10)])
+                painter.drawPolygon(lp)
+                painter.drawPolygon(rp)
 
             painter.setPen(QColor("#000000"))
             painter.drawText(34, y + 12, label)
@@ -1181,6 +1267,8 @@ class GraphView(QWidget):
                     curvature=rad,
                     bend_ratio=p_bend,
                     graph_view=self,
+                    valve_start=bool(p_obj.valve_start) if p_obj else False,
+                    valve_end=bool(p_obj.valve_end) if p_obj else False,
                 )
 
                 # Pipe Tooltip

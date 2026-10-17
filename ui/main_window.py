@@ -13,13 +13,20 @@ from PySide6.QtWidgets import (
 from core.models import Network
 from core.matrices import build_matrices
 from core.io import save_project, load_project, load_project_full
-from core.examples import example_paper_network, example_broken_network
+from core.examples import (
+    example_paper_network,
+    example_broken_network,
+    specimen_network,
+    specimen_scenario,
+    specimen_physics,
+)
 
 from ui.build_panel import BuildPanel
 from ui.graph_view import GraphView
 from ui.matrix_view import MatrixView
 from ui.checks_view import ChecksView
 from ui.incidence_view import IncidenceView
+from ui.comparison_tab import ComparisonTab
 
 
 from app_info import APP_NAME, __version__
@@ -64,6 +71,7 @@ class MainWindow(QMainWindow):
         ex_menu = file_menu.addMenu("Load &Example")
         ex_menu.addAction("Paper sample network").triggered.connect(lambda: self._on_load_example(example_paper_network))
         ex_menu.addAction("Broken network (demo of warnings)").triggered.connect(lambda: self._on_load_example(example_broken_network))
+        ex_menu.addAction("Specimen with valves (EPANET comparison)").triggered.connect(self._on_load_specimen_example)
         file_menu.addSeparator()
 
         file_menu.addAction("E&xit").triggered.connect(self.close)
@@ -101,6 +109,7 @@ class MainWindow(QMainWindow):
         self.matrix_view = MatrixView()
         self.checks_view = ChecksView()
         self.incidence_view = IncidenceView()
+        self.comparison_tab = ComparisonTab(self.network, self.graph_view.get_positions, self)
 
         self._syncing_selection = False
 
@@ -111,6 +120,7 @@ class MainWindow(QMainWindow):
         self.graph_view.pipe_clicked.connect(self._on_graph_pipe_clicked)
         self.graph_view.background_clicked.connect(self._on_graph_background_clicked)
         self.graph_view.relayout_btn.clicked.connect(self._mark_edited)
+        self.comparison_tab.network_modified.connect(self._mark_edited)
 
         self.build_panel.node_selected.connect(self._on_panel_node_selected)
         self.build_panel.pipe_selected.connect(self._on_panel_pipe_selected)
@@ -120,6 +130,7 @@ class MainWindow(QMainWindow):
         self.right_tabs.addTab(self.matrix_view, "Matrices")
         self.right_tabs.addTab(self.checks_view, "Checks")
         self.right_tabs.addTab(self.incidence_view, "Incidence")
+        self.right_tabs.addTab(self.comparison_tab, "Comparison with EPANET")
 
         splitter.addWidget(self.right_tabs)
         splitter.setStretchFactor(0, 0)
@@ -156,6 +167,8 @@ class MainWindow(QMainWindow):
         return False
 
     def closeEvent(self, event):
+        if hasattr(self, "comparison_tab"):
+            self.comparison_tab.stop_worker()
         if self._maybe_save_changes():
             event.accept()
         else:
@@ -165,8 +178,11 @@ class MainWindow(QMainWindow):
         path = Path(path)
         loaded = load_project_full(path)
         self.network = loaded.network
+        self.comparison_tab.set_network(loaded.network)
         self.graph_view.set_positions(loaded.positions)
         self.graph_view.set_edge_bends(loaded.edge_bends)
+        self.comparison_tab.set_scenario(loaded.scenario)
+        self.comparison_tab.set_physics(loaded.physics)
         self._current_filepath = path
         self._last_dir = path.parent
         self.refresh()
@@ -177,8 +193,10 @@ class MainWindow(QMainWindow):
         if not self._maybe_save_changes():
             return
         self.network.clear()
+        self.comparison_tab.set_network(self.network)
         self.graph_view.set_positions({})
         self.graph_view.set_edge_bends({})
+        self.comparison_tab.reset()
         self._current_filepath = None
         self.refresh()
         self.setWindowModified(False)
@@ -205,6 +223,8 @@ class MainWindow(QMainWindow):
                 self.network,
                 self.graph_view.get_positions(),
                 self.graph_view.get_edge_bends(),
+                scenario=self.comparison_tab.get_scenario(),
+                physics=self.comparison_tab.get_physics(),
             )
             self.setWindowModified(False)
             self._update_window_title()
@@ -228,10 +248,30 @@ class MainWindow(QMainWindow):
         if not self._maybe_save_changes():
             return
         self.network = example_factory()
+        self.comparison_tab.set_network(self.network)
         self.graph_view.set_positions({})
         self.graph_view.set_edge_bends({})
+        self.comparison_tab.reset()
         self._current_filepath = None
         self.refresh()
+        self.setWindowModified(False)
+        self._update_window_title()
+
+    def _on_load_specimen_example(self):
+        if not self._maybe_save_changes():
+            return
+        net, pos = specimen_network()
+        self.network = net
+        self.comparison_tab.set_network(net)
+        self.graph_view.set_positions(pos)
+        self.graph_view.set_edge_bends({})
+        sc1 = specimen_scenario(1)
+        phys = specimen_physics()
+        self.comparison_tab.set_scenario(sc1)
+        self.comparison_tab.set_physics(phys)
+        self._current_filepath = None
+        self.refresh()
+        self.graph_view.fit_in_view()
         self.setWindowModified(False)
         self._update_window_title()
 
@@ -288,6 +328,7 @@ class MainWindow(QMainWindow):
         try:
             self.network.clear()
             self.graph_view.set_positions({})
+            self.comparison_tab.reset()
             self._mark_edited()
         except Exception as e:
             self._handle_error("Failed to clear network", e)
@@ -380,6 +421,9 @@ class MainWindow(QMainWindow):
             num_nodes, num_pipes = len(self.network.nodes), len(self.network.pipes)
             K = matrices_res["K_dimension"] if matrices_res else 0
             self.statusBar().showMessage(f"Nodes: {num_nodes}   Pipes: {num_pipes}   K = {K}")
+
+            if hasattr(self, "comparison_tab"):
+                self.comparison_tab.update_tab(self.network)
         except Exception as e:
             msg = str(e)
             self.statusBar().showMessage(f"Error during refresh: {msg}")

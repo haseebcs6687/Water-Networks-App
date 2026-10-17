@@ -323,6 +323,72 @@ These decisions were made while implementing the v2.0 switched-DAE comparison fe
 - Similarly, a valve at the end of a pipe introduces intermediate junction `<pipe>_R` at the end node's elevation.
 - This reproduces MATLAB's N5/N4/N6/N9 layout and provides exact correspondence with DAE state variables $P_L$ and $P_R$.
 
+---
+
+## 23. Valves are edited in the Comparison tab
+
+*(Not confirmed by the client)*
+
+**Decision**: Valve existence at pipe boundaries (`valve_start`, `valve_end`) is edited via checkboxes in the dedicated "Valves" table inside the "Comparison with EPANET" tab rather than on the primary Build panel.
+
+- This keeps the general Network Builder clean and focused on standard pipe/node properties while centralizing comparison-specific switching controls.
+- Toggling a valve immediately updates the underlying Network model, marks the project as modified, updates the graph visualization with valve symbols, and automatically purges references to any removed valves from the active scenario with an inline notification.
+
+---
+
+## 24. Scenario times are whole seconds
+
+*(Not confirmed by the client)*
+
+**Decision**: Switching event times and total simulation end times in the UI scenario editor are constrained to integer seconds via whole-second spin boxes.
+
+- Sub-second switching events are rejected by the comparison engine because EPANET's rule-based controls operate on integer-second discrete time steps. Constraining the UI controls prevents user confusion and invalid input.
+
+---
+
+## 25. Presets use the first two valves
+
+*(Not confirmed by the client)*
+
+**Decision**: The built-in MATLAB specimen scenario presets (1 to 5) automatically bind to the first two valves found in the network in canonical pipe creation order (start valve before end valve).
+
+- The UI explicitly displays the resolved binding (e.g. `V1 = P2:start, V2 = P2:end`).
+- If the network contains fewer than two valves, presets are disabled with an informative label (`Need >= 2 valves for presets`), preventing misconfiguration.
+
+---
+
+## 26. A run uses a snapshot of the network
+
+*(Not confirmed by the client)*
+
+**Decision**: The comparison simulation is executed on a frozen deep copy (snapshot) of the network, scenario, and physics settings taken at the exact moment the "Run comparison" button is clicked.
+
+- Edits made to the network or settings after a run do not mutate or invalidate the existing results in-place.
+- Instead, a deterministic SHA-256 signature is evaluated against the current network state; if any discrepancy is detected, a prominent yellow banner alerts the user: `Network or settings changed since this result - run again`.
+
+---
+
+## 27. Valve symbol in the graph
+
+*(Not confirmed by the client)*
+
+**Decision**: Valves are rendered in the interactive network graph as small bow-tie symbols (two point-to-point opposing triangles with dark outline) positioned just inside the pipe boundary at the valve location (approx. 5% along the pipe curve).
+
+- The symbols follow interactive node dragging, live pipe curvature bending, and automatic layout.
+- The symbol has a fixed cosmetic pixel size (does not scale awkwardly with zoom), displays a descriptive tooltip (`Valve at start/end of <pipe>`), forwards clicks to select the parent pipe without disrupting hit-testing, is rendered in exported images ("Save image..."), and is included in the graph view legend.
+
+---
+
+## 28. Friction law choice in the UI
+
+*(Not confirmed by the client)*
+
+**Decision**: The Comparison tab exposes three friction formulations via a dropdown: "Constant friction factor" (default $f = 0.02$), "Swamee-Jain", and "Darcy-Weisbach as in EPANET".
+
+- When non-constant friction is selected, the constant factor spin box is hidden, and the simulation uses the real pipe roughness, diameter, fluid viscosity, and Reynolds number.
+- Advanced physical parameters (gravity $g$ and kinematic viscosity $\nu$) are grouped under a collapsed "Advanced Parameters" group with standard physical defaults ($g = 9.81456\text{ m/s}^2$, $\nu = 1.0219\times 10^{-6}\text{ m}^2/\text{s}$).
+
+
 
 
 

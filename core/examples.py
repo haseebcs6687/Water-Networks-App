@@ -1,6 +1,12 @@
-﻿"""Sample networks for testing and GUI demo presets."""
+"""Sample networks for testing and GUI demo presets."""
+
+from __future__ import annotations
+
+from typing import Dict, Tuple
 
 from core.models import Network
+from core.scenario import Scenario, ValveId
+from core.physics import PhysicsSettings
 
 
 def example_paper_network() -> Network:
@@ -45,3 +51,52 @@ def example_broken_network() -> Network:
     net.add_pipe("J4", "J5", id="P5")
 
     return net
+
+
+def specimen_network() -> Tuple[Network, Dict[str, Tuple[float, float]]]:
+    """Create the MATLAB reference specimen network with left-to-right positions.
+
+    Nodes:
+      - R1: reservoir (elevation 20.0 m, head 50.0 m)
+      - J1: junction (elevation 5.0 m)
+      - R2: reservoir (elevation 0.0 m, head 46.0 m)
+
+    Pipes:
+      - P1: R1 -> J1 (length 400.0 m, diameter 0.4 m, roughness 0.000359 m)
+      - P2: J1 -> R2 (length 250.0 m, diameter 0.4 m, roughness 0.000359 m)
+        with valve_start=True and valve_end=True
+    """
+    net = Network()
+    net.add_node("reservoir", id="R1", elevation=20.0, head=50.0)
+    net.add_node("junction", id="J1", elevation=5.0)
+    net.add_node("reservoir", id="R2", elevation=0.0, head=46.0)
+
+    net.add_pipe(
+        "R1", "J1", id="P1",
+        length=400.0, diameter=0.4, roughness=0.000359,
+    )
+    net.add_pipe(
+        "J1", "R2", id="P2",
+        length=250.0, diameter=0.4, roughness=0.000359,
+        valve_start=True, valve_end=True,
+    )
+
+    positions = {
+        "R1": (-0.8, 0.0),
+        "J1": (0.0, 0.0),
+        "R2": (0.8, 0.0),
+    }
+
+    return net, positions
+
+
+def specimen_scenario(k: int = 1) -> Scenario:
+    """Factory for MATLAB reference specimen scenarios (k = 1..5)."""
+    v1 = ValveId("P2", "start")
+    v2 = ValveId("P2", "end")
+    return Scenario.matlab_specimen(k, v1, v2)
+
+
+def specimen_physics() -> PhysicsSettings:
+    """Physics settings for the specimen reference (constant friction f = 0.02)."""
+    return PhysicsSettings(friction_mode="constant", friction_factor=0.02)
