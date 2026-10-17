@@ -288,13 +288,20 @@ def draw_comparison(
                 # Text label
                 sign_str = f"{coeff:+.2f}"
                 txt = f"DAE: Dirac {sign_str} δ(t - {ts:g})\nEPANET: none"
+                if ts >= 0.5 * T:
+                    x_txt = ts - 0.03 * T
+                    ha_txt = "right"
+                else:
+                    x_txt = ts + 0.03 * T
+                    ha_txt = "left"
                 ax.text(
-                    ts + 0.03 * T,
+                    x_txt,
                     base + 0.62 * h,
                     txt,
                     color=cD,
                     fontsize=8.5,
                     fontweight="bold",
+                    horizontalalignment=ha_txt,
                     verticalalignment="center",
                     bbox=dict(
                         boxstyle="square,pad=0.25",
@@ -324,9 +331,10 @@ def draw_comparison(
                 title_text = opts.get("title")
             elif result is not None and result.scenario and result.scenario.title:
                 s_title = result.scenario.title
-                if ":" in s_title and len(s_title) > 35:
-                    s_title = s_title.split(":")[0].strip()
-                title_text = f"Switched DAE vs EPANET: {s_title}"
+                if fig.bbox.width < 1200 or len(s_title) > 25:
+                    title_text = f"Switched DAE vs EPANET\n{s_title}"
+                else:
+                    title_text = f"Switched DAE vs EPANET: {s_title}"
             else:
                 title_text = "Switched DAE vs EPANET"
             while "  " in title_text:
@@ -337,12 +345,13 @@ def draw_comparison(
 
             fig_w = fig.bbox.width
             if fig_w < 800:
-                ax.set_title(title_text, fontsize=10, wrap=True)
+                ax.set_title(title_text, fontsize=9.5, wrap=True)
+                leg_y = 1.25 if "\n" in title_text else 1.20
                 ax.legend(
                     [line_dae, line_ep],
                     ["switched DAE", engine_label(result)],
                     loc="lower center",
-                    bbox_to_anchor=(0.5, 1.16),
+                    bbox_to_anchor=(0.5, leg_y),
                     ncol=2,
                     frameon=False,
                     fontsize=8,
@@ -355,7 +364,7 @@ def draw_comparison(
                     loc="center left",
                     bbox_to_anchor=(1.02, 0.5),
                     frameon=False,
-                    fontsize=8,
+                    fontsize=8.5,
                 )
 
         # Bottom panel: x axis label and formatter
@@ -387,21 +396,20 @@ class ComparisonPlots(QWidget):
         layout.setSpacing(6)
 
         # -------------------------------------------------------------
-        # TOP OPTIONS BAR (2 rows to prevent clipping at all window sizes)
+        # TOP OPTIONS BAR & TOOLBAR (responsive combined row)
         # -------------------------------------------------------------
-        opt_box = QVBoxLayout()
-        opt_box.setSpacing(4)
+        self.top_container = QWidget(self)
+        self.top_box = QVBoxLayout(self.top_container)
+        self.top_box.setContentsMargins(0, 0, 0, 0)
+        self.top_box.setSpacing(4)
 
-        opt_row1 = QHBoxLayout()
-        opt_row1.setSpacing(10)
         self.states_btn = QToolButton()
         self.states_btn.setText("States...")
         self.states_btn.setPopupMode(QToolButton.InstantPopup)
         self.states_menu = QMenu(self)
         self.states_btn.setMenu(self.states_menu)
-        opt_row1.addWidget(self.states_btn)
 
-        opt_row1.addWidget(QLabel("Display:"))
+        self.display_lbl = QLabel("Display:")
         self.radio_group = QButtonGroup(self)
         self.radio_pressure = QRadioButton("Pressure head")
         self.radio_pressure.setChecked(True)
@@ -410,23 +418,12 @@ class ComparisonPlots(QWidget):
         self.radio_group.addButton(self.radio_total, 1)
         self.radio_group.buttonClicked.connect(self._on_head_mode_changed)
         self.radio_pressure.setMinimumWidth(self.radio_pressure.fontMetrics().horizontalAdvance(self.radio_pressure.text()) + 26)
-        opt_row1.addWidget(self.radio_pressure)
-        opt_row1.addStretch()
-        opt_box.addLayout(opt_row1)
-
-        opt_row2 = QHBoxLayout()
-        opt_row2.setSpacing(10)
         self.radio_total.setMinimumWidth(self.radio_total.fontMetrics().horizontalAdvance(self.radio_total.text()) + 26)
-        opt_row2.addWidget(self.radio_total)
+
         self.dirac_check = QCheckBox("Show Dirac arrows")
         self.dirac_check.setChecked(True)
         self.dirac_check.toggled.connect(self._on_dirac_toggled)
         self.dirac_check.setMinimumWidth(self.dirac_check.fontMetrics().horizontalAdvance(self.dirac_check.text()) + 26)
-        opt_row2.addWidget(self.dirac_check)
-        opt_row2.addStretch()
-        opt_box.addLayout(opt_row2)
-
-        layout.addLayout(opt_box)
 
         # -------------------------------------------------------------
         # MATPLOTLIB CANVAS & TOOLBAR (In QScrollArea)
@@ -438,13 +435,14 @@ class ComparisonPlots(QWidget):
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        self.canvas.setMinimumWidth(640)
+        self.canvas.setMinimumWidth(560)
         self.scroll_area.setWidget(self.canvas)
 
         self.update_toolbar_style()
 
-        layout.addWidget(self.toolbar)
+        layout.addWidget(self.top_container)
         layout.addWidget(self.scroll_area, 1)
+        self._relayout_top_bar(self.width())
 
         # -------------------------------------------------------------
         # BOTTOM EXPORT BUTTONS BAR
@@ -525,10 +523,76 @@ class ComparisonPlots(QWidget):
         if event.type() == QEvent.PaletteChange:
             self.update_toolbar_style()
 
+    def _relayout_top_bar(self, width: int):
+        """Put options and toolbar on ONE row when width >= 900 px, wrap when narrower."""
+        while self.top_box.count():
+            item = self.top_box.takeAt(0)
+            if item.layout():
+                sub = item.layout()
+                while sub.count():
+                    sub.takeAt(0)
+
+        if width >= 900:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+            row.addWidget(self.states_btn)
+            row.addWidget(self.display_lbl)
+            row.addWidget(self.radio_pressure)
+            row.addWidget(self.radio_total)
+            row.addWidget(self.dirac_check)
+            row.addStretch()
+            row.addWidget(self.toolbar)
+            self.top_box.addLayout(row)
+        elif width >= 650:
+            row1 = QHBoxLayout()
+            row1.setContentsMargins(0, 0, 0, 0)
+            row1.setSpacing(8)
+            row1.addWidget(self.states_btn)
+            row1.addWidget(self.display_lbl)
+            row1.addWidget(self.radio_pressure)
+            row1.addWidget(self.radio_total)
+            row1.addWidget(self.dirac_check)
+            row1.addStretch()
+
+            row2 = QHBoxLayout()
+            row2.setContentsMargins(0, 0, 0, 0)
+            row2.setSpacing(8)
+            row2.addWidget(self.toolbar)
+            row2.addStretch()
+
+            self.top_box.addLayout(row1)
+            self.top_box.addLayout(row2)
+        else:
+            row1 = QHBoxLayout()
+            row1.setContentsMargins(0, 0, 0, 0)
+            row1.setSpacing(8)
+            row1.addWidget(self.states_btn)
+            row1.addWidget(self.display_lbl)
+            row1.addWidget(self.radio_pressure)
+            row1.addStretch()
+
+            row2 = QHBoxLayout()
+            row2.setContentsMargins(0, 0, 0, 0)
+            row2.setSpacing(8)
+            row2.addWidget(self.radio_total)
+            row2.addWidget(self.dirac_check)
+            row2.addStretch()
+
+            row3 = QHBoxLayout()
+            row3.setContentsMargins(0, 0, 0, 0)
+            row3.setSpacing(8)
+            row3.addWidget(self.toolbar)
+            row3.addStretch()
+
+            self.top_box.addLayout(row1)
+            self.top_box.addLayout(row2)
+            self.top_box.addLayout(row3)
+
     def _update_canvas_height(self):
-        """Ensure all panels are shown without scrollbar if visible area is tall enough for 125 px per panel."""
+        """Ensure all panels are shown without scrollbar if visible area is tall enough for 110 px per panel."""
         n = max(1, len(self._selected_states) if self._selected_states else 5)
-        needed_h = n * 125
+        needed_h = n * 110
         visible_h = self.scroll_area.viewport().height()
         if visible_h >= needed_h:
             self.canvas.setMinimumHeight(0)
@@ -542,6 +606,7 @@ class ComparisonPlots(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._relayout_top_bar(self.width())
         self._update_canvas_height()
 
     # -----------------------------------------------------------------

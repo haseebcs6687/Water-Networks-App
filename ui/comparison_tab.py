@@ -417,6 +417,7 @@ class ComparisonTab(QWidget):
 
         left_scroll.setWidget(left_widget)
         left_scroll.setMinimumWidth(440)
+        left_scroll.setMaximumWidth(460)
         splitter.addWidget(left_scroll)
 
         # -------------------------------------------------------------
@@ -538,7 +539,7 @@ class ComparisonTab(QWidget):
         right_layout.addWidget(self.results_tabs, 1)
         splitter.addWidget(right_container)
 
-        splitter.setSizes([450, 480])
+        splitter.setSizes([450, 2000])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         main_layout.addWidget(splitter)
@@ -547,13 +548,15 @@ class ComparisonTab(QWidget):
         """Toggle left setup column between collapsed (0) and expanded."""
         sizes = self.splitter.sizes()
         if sizes[0] > 0:
-            self._saved_setup_width = max(440, sizes[0])
+            self._saved_setup_width = max(440, min(460, sizes[0]))
             self.left_scroll.setMinimumWidth(0)
+            self.left_scroll.setMaximumWidth(0)
             self.splitter.setSizes([0, sizes[0] + sizes[1]])
             self.toggle_setup_btn.setText("Show setup")
         else:
             restore_w = getattr(self, "_saved_setup_width", 450)
             self.left_scroll.setMinimumWidth(440)
+            self.left_scroll.setMaximumWidth(460)
             self.splitter.setSizes([restore_w, max(200, sizes[1] - restore_w)])
             self.toggle_setup_btn.setText("Hide setup")
 
@@ -563,9 +566,11 @@ class ComparisonTab(QWidget):
         if sizes[0] == 0:
             self.toggle_setup_btn.setText("Show setup")
             self.left_scroll.setMinimumWidth(0)
+            self.left_scroll.setMaximumWidth(0)
         else:
-            self._saved_setup_width = sizes[0]
+            self._saved_setup_width = max(440, min(460, sizes[0]))
             self.left_scroll.setMinimumWidth(440)
+            self.left_scroll.setMaximumWidth(460)
             self.toggle_setup_btn.setText("Hide setup")
 
     # -----------------------------------------------------------------

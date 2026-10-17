@@ -465,6 +465,15 @@ These decisions were made while implementing the v2.0 switched-DAE comparison fe
 
 **Decision**: The warning banner "⚠️ Network or settings changed since this result - run again" relies strictly on comparing SHA-256 signatures of inputs (network snapshot, scenario, physics settings) against the signature stored in the simulation result (`ComparisonResult.is_outdated()`). No event counters or "dirty" flags are used. Signatures round floating-point parameters (e.g. gravitational acceleration $g$ and viscosity $\nu$) to prevent IEEE 754 precision mismatches. The banner dynamically recomputes after every edit, run, and preset change.
 
+---
+
+## 37. Editing panel hidden on the Comparison tab to give the plots room
+
+*(Confirmed by the client)*
+
+**Decision**: While the Comparison tab is active, the left editing panel (Add Node / Add Pipe / Nodes list) is automatically hidden to give the comparison plots maximum horizontal room. When switching back to any other tab (Network, Matrices, Checks, Incidence), the editing panel is automatically restored. No data is changed, and the state of the left panel (entered text, selected items) is strictly preserved.
+
+
 
 
 

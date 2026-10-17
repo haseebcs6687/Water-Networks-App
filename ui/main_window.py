@@ -97,14 +97,15 @@ class MainWindow(QMainWindow):
         self.build_panel.pipe_updated.connect(self._on_update_pipe)
         self.build_panel.cleared.connect(self._on_clear_all)
 
-        scroll_area = QScrollArea()
-        scroll_area.setWidget(self.build_panel)
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_area.setFixedWidth(330)
-        splitter.addWidget(scroll_area)
+        self.build_scroll_area = QScrollArea()
+        self.build_scroll_area.setWidget(self.build_panel)
+        self.build_scroll_area.setWidgetResizable(True)
+        self.build_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.build_scroll_area.setFixedWidth(330)
+        splitter.addWidget(self.build_scroll_area)
 
         self.right_tabs = QTabWidget()
+        self.right_tabs.currentChanged.connect(self._on_tab_changed)
         self.graph_view = GraphView()
         self.matrix_view = MatrixView()
         self.checks_view = ChecksView()
@@ -140,10 +141,19 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         self.apply_tab_style()
 
+    def _on_tab_changed(self, index: int):
+        """Hide left editing panel while Comparison tab is active to give plots maximum space."""
+        is_comp = (self.right_tabs.widget(index) == self.comparison_tab)
+        if is_comp:
+            self.build_scroll_area.hide()
+        else:
+            self.build_scroll_area.show()
+
     def apply_tab_style(self):
         """Ensure right_tabs and child tab bars have high contrast >= 4.5:1 in both light and dark themes."""
         pal = self.palette()
         is_dark = pal.color(QPalette.Window).value() < 128
+        self.build_panel.update_theme_style(is_dark)
         if is_dark:
             ss = """
             QTabBar::tab {

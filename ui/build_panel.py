@@ -2,8 +2,8 @@
 
 from typing import Optional, Dict, Any, List
 
-from PySide6.QtCore import Signal, Qt, QLocale
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtCore import Signal, Qt, QLocale, QEvent
+from PySide6.QtGui import QDoubleValidator, QPalette, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QComboBox,
     QPushButton, QCheckBox, QDoubleSpinBox, QTableWidget, QTableWidgetItem,
@@ -52,6 +52,7 @@ class BuildPanel(QWidget):
         self._selected_pipe_id: Optional[str] = None
         self._updating_selection = False
         self._init_ui()
+        self.update_theme_style()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -653,3 +654,137 @@ class BuildPanel(QWidget):
             self._selected_node_id = None
             self._selected_pipe_id = None
             self.cleared.emit()
+
+    def update_theme_style(self, is_dark: Optional[bool] = None):
+        """Ensure high contrast text and background for all controls in both light and dark themes."""
+        if getattr(self, "_updating_theme", False):
+            return
+        self._updating_theme = True
+        try:
+            if is_dark is None:
+                is_dark = self.palette().color(QPalette.Window).value() < 128
+
+            if is_dark:
+                ph_color = QColor("#888888")
+                self.setStyleSheet("""
+                    BuildPanel { background: transparent; }
+                    QGroupBox {
+                        font-weight: bold;
+                        color: #E0E0E0;
+                        border: 1px solid #444444;
+                        border-radius: 4px;
+                        margin-top: 8px;
+                        padding-top: 10px;
+                    }
+                    QGroupBox::title {
+                        subcontrol-origin: margin;
+                        left: 8px;
+                        padding: 0 4px;
+                    }
+                    QLabel { color: #E0E0E0; }
+                    QPushButton {
+                        background-color: #383838;
+                        color: #F0F0F0;
+                        border: 1px solid #505050;
+                        border-radius: 4px;
+                        padding: 4px 10px;
+                        font-weight: 500;
+                    }
+                    QPushButton:hover { background-color: #484848; }
+                    QPushButton:pressed { background-color: #2D2D2D; }
+                    QPushButton:disabled {
+                        background-color: #2A2A2A;
+                        color: #666666;
+                        border: 1px solid #3A3A3A;
+                    }
+                    QComboBox {
+                        background-color: #252525;
+                        color: #F0F0F0;
+                        border: 1px solid #505050;
+                        border-radius: 4px;
+                        padding: 3px 6px;
+                    }
+                    QComboBox:disabled {
+                        background-color: #2A2A2A;
+                        color: #666666;
+                    }
+                    QLineEdit {
+                        background-color: #252525;
+                        color: #F0F0F0;
+                        border: 1px solid #505050;
+                        border-radius: 4px;
+                        padding: 3px 6px;
+                    }
+                    QLineEdit:disabled {
+                        background-color: #2A2A2A;
+                        color: #666666;
+                    }
+                """)
+            else:
+                ph_color = QColor("#5A626A")
+                self.setStyleSheet("""
+                    BuildPanel { background: transparent; }
+                    QGroupBox {
+                        font-weight: bold;
+                        color: #1E1E1E;
+                        border: 1px solid #D0D4DC;
+                        border-radius: 4px;
+                        margin-top: 8px;
+                        padding-top: 10px;
+                    }
+                    QGroupBox::title {
+                        subcontrol-origin: margin;
+                        left: 8px;
+                        padding: 0 4px;
+                    }
+                    QLabel { color: #1E1E1E; }
+                    QPushButton {
+                        background-color: #E4E7EB;
+                        color: #1E1E1E;
+                        border: 1px solid #B8BDC5;
+                        border-radius: 4px;
+                        padding: 4px 10px;
+                        font-weight: 500;
+                    }
+                    QPushButton:hover { background-color: #D8DCE2; }
+                    QPushButton:pressed { background-color: #CCD1D9; }
+                    QPushButton:disabled {
+                        background-color: #EAECEF;
+                        color: #8C939D;
+                        border: 1px solid #D5D9E0;
+                    }
+                    QComboBox {
+                        background-color: #FFFFFF;
+                        color: #1E1E1E;
+                        border: 1px solid #B8BDC5;
+                        border-radius: 4px;
+                        padding: 3px 6px;
+                    }
+                    QComboBox:disabled {
+                        background-color: #F4F5F7;
+                        color: #8C939D;
+                    }
+                    QLineEdit {
+                        background-color: #FFFFFF;
+                        color: #1E1E1E;
+                        border: 1px solid #B8BDC5;
+                        border-radius: 4px;
+                        padding: 3px 6px;
+                    }
+                    QLineEdit:disabled {
+                        background-color: #F4F5F7;
+                        color: #8C939D;
+                    }
+                """)
+
+            for w in self.findChildren(QLineEdit):
+                pal = w.palette()
+                pal.setColor(QPalette.PlaceholderText, ph_color)
+                w.setPalette(pal)
+        finally:
+            self._updating_theme = False
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.PaletteChange and not getattr(self, "_updating_theme", False):
+            self.update_theme_style()
