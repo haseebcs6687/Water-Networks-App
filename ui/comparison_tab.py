@@ -550,7 +550,7 @@ class ComparisonTab(QWidget):
             "Diff (Eq vs EP)",
         ])
         eq_layout.addWidget(self.eq_table, 1)
-        self.eq_summary_label = QLabel("No results yet. Run comparison to view equilibrium differences.")
+        self.eq_summary_label = QLabel("Run comparison to see equilibrium differences.")
         self.eq_summary_label.setStyleSheet("color: #666666; font-style: italic;")
         eq_layout.addWidget(self.eq_summary_label)
         self.results_tabs.addTab(eq_widget, "Equilibrium")
@@ -571,7 +571,7 @@ class ComparisonTab(QWidget):
             "EPANET",
         ])
         imp_layout.addWidget(self.imp_table, 1)
-        self.imp_summary_label = QLabel("No results yet. Run comparison to view Dirac impulses.")
+        self.imp_summary_label = QLabel("EPANET: none (EPANET has no impulses).")
         self.imp_summary_label.setStyleSheet("color: #666666; font-style: italic;")
         imp_layout.addWidget(self.imp_summary_label)
         self.results_tabs.addTab(imp_widget, "Dirac impulses")
@@ -645,9 +645,9 @@ class ComparisonTab(QWidget):
         if hasattr(self, "diff_summary_label"):
             self.diff_summary_label.setText("No results yet. Run comparison to view point-by-point differences.")
             self.diff_summary_label.setStyleSheet("color: #666666; font-style: italic;")
-        self.eq_summary_label.setText("No results yet. Run comparison to view equilibrium differences.")
+        self.eq_summary_label.setText("Run comparison to see equilibrium differences.")
         self.eq_summary_label.setStyleSheet("color: #666666; font-style: italic;")
-        self.imp_summary_label.setText("No results yet. Run comparison to view Dirac impulses.")
+        self.imp_summary_label.setText("EPANET: none (EPANET has no impulses).")
         self.imp_summary_label.setStyleSheet("color: #666666; font-style: italic;")
         if hasattr(self, "params_note"):
             self.params_note.setText("No results yet. Parameters will be recorded when comparison is run.")
