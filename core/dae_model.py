@@ -308,16 +308,16 @@ class SwitchedDAE:
         return False
 
     def explain_singular(self, mode: Optional[Union[Dict[Any, int], Mode]] = None) -> str:
-        """Return a plain-language explanation of singularity for the given mode."""
+        """Return a plain-language explanation of why a mode cannot be computed."""
         if self.is_regular(mode):
-            return "Regular: matrix pencil has non-identically-zero determinant with well-posed solutions."
+            return "Valid: flow paths and pressures are well-posed."
         return (
-            "Singular matrix pencil: closing valves isolates a network section or disconnects "
-            "boundary head references, so the algebraic equations have no unique solution."
+            "Closing valves isolates a network section or disconnects "
+            "reservoir supplies, so pressures cannot be uniquely determined."
         )
 
     def check_scenario(self, scenario: Scenario) -> List[str]:
-        """Check scenario validity against network valves and mode regularity."""
+        """Check scenario validity against network valves and mode solvability."""
         problems: List[str] = []
         network_valves = set(self.valves)
 
@@ -327,20 +327,46 @@ class SwitchedDAE:
             if v not in network_valves:
                 problems.append(f"Valve {v} in scenario does not exist in the network")
 
-        # Check regularity of each mode
+        # Check solvability of each mode
         for m in scenario.modes():
             if not self.is_regular(m.state):
-                all_closed = all(s == 0 for s in m.state.values())
-                if all_closed and len(m.state) > 0:
+                # Check if both valves of any pipe are closed
+                shut_pipes = []
+                for p in self.network.pipes:
+                    if p.valve_start and p.valve_end:
+                        st_start = None
+                        st_end = None
+                        for v_k, v_val in m.state.items():
+                            v_str = str(v_k)
+                            if v_str == f"{p.id}:start":
+                                st_start = v_val
+                            elif v_str == f"{p.id}:end":
+                                st_end = v_val
+                        if st_start == 0 and st_end == 0:
+                            shut_pipes.append(p.id)
+                if shut_pipes:
+                    p_name = shut_pipes[0]
                     problems.append(
-                        f"Mode on [{m.t_start}s, {m.t_end}s]: all valves closed isolates part of the network "
-                        "and the equations have no unique solution"
+                        f"From {m.t_start:.0f} s to {m.t_end:.0f} s both valves of pipe {p_name} are closed (all valves closed: no unique solution). "
+                        "The water between them is then shut in on both sides, so the model cannot compute that interval. "
+                        "Open at least one valve."
                     )
                 else:
-                    problems.append(
-                        f"Mode on [{m.t_start}s, {m.t_end}s] with valve states {m.state} is singular: "
-                        f"{self.explain_singular(m.state)}"
-                    )
+                    all_closed = all(s == 0 for s in m.state.values())
+                    if all_closed and len(m.state) > 0:
+                        problems.append(
+                            f"From {m.t_start:.0f} s to {m.t_end:.0f} s all valves are closed. "
+                            "No water can flow through any pipe, so pressures cannot be uniquely determined for that interval. "
+                            "Open at least one valve."
+                        )
+                    else:
+                        closed_valves = [str(v) for v, s in m.state.items() if s == 0]
+                        cv_str = ", ".join(closed_valves) if closed_valves else "specified"
+                        problems.append(
+                            f"From {m.t_start:.0f} s to {m.t_end:.0f} s closing valve(s) {cv_str} "
+                            "cuts off flow or isolates network sections, "
+                            "so the model cannot compute that interval. Open at least one valve."
+                        )
 
         return problems
 

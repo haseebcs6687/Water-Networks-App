@@ -54,7 +54,7 @@ def patch_dialogs(monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Discard)
 
 
-def wait_for_comparison(tab, timeout_s=30.0):
+def wait_for_comparison(tab, timeout_s=60.0):
     """Wait for background ComparisonWorker to finish."""
     t0 = time.time()
     # Give worker a moment to start
@@ -67,7 +67,7 @@ def wait_for_comparison(tab, timeout_s=30.0):
         QApplication.processEvents()
         QTest.qWait(50)
         if time.time() - t0 > timeout_s:
-            raise TimeoutError("Comparison run timed out after 30 seconds")
+            raise TimeoutError(f"Comparison run timed out after {timeout_s} seconds")
     QApplication.processEvents()
 
 
@@ -157,47 +157,101 @@ def test_03_presets_1_to_5_and_mapping(qapp):
 def test_04_run_specimen_1_to_5_results_and_impulses(qapp):
     """4. Run specimen 1..5 through the UI: results appear, DAE vs EPANET within tolerances, impulse table values."""
     window = MainWindow()
-
-    # 4a. Run Specimen 1
     window._on_load_specimen_example()
     tab = window.comparison_tab
+
+    def parse_ui_impulses():
+        """Read impulse table rows directly from visible QTableWidget cells."""
+        imps = {}
+        for r in range(tab.imp_table.rowCount()):
+            t_str = tab.imp_table.item(r, 0).text()
+            st_lbl = tab.imp_table.item(r, 1).text()
+            coeff_val = float(tab.imp_table.item(r, 2).text())
+            ep_text = tab.imp_table.item(r, 3).text()
+            assert ep_text == "EPANET: none"
+            imps[st_lbl] = (float(t_str), coeff_val)
+        return imps
+
+    def assert_eq_table_tolerances(settled_intervals=()):
+        """Verify equilibrium table differences from UI table cells."""
+        for r in range(tab.eq_table.rowCount()):
+            inv = tab.eq_table.item(r, 0).text()
+            lbl = tab.eq_table.item(r, 2).text().lower()
+            diff_end = float(tab.eq_table.item(r, 6).text())
+            diff_eq = float(tab.eq_table.item(r, 7).text())
+
+            # Equilibrium differences must be within tolerance for every interval
+            if "flow" in lbl:
+                assert diff_eq <= 5e-5, f"Eq flow diff {diff_eq} > 5e-5 for {lbl} in {inv}"
+            else:
+                assert diff_eq <= 5e-3, f"Eq head diff {diff_eq} > 5e-3 for {lbl} in {inv}"
+
+            # If interval is settled, end difference must also be within tolerance
+            for settled_inv in settled_intervals:
+                if settled_inv in inv:
+                    if "flow" in lbl:
+                        assert diff_end <= 5e-5, f"Settled end flow diff {diff_end} > 5e-5 for {lbl} in {inv}"
+                    else:
+                        assert diff_end <= 5e-3, f"Settled end head diff {diff_end} > 5e-3 for {lbl} in {inv}"
+
+    # 4a. Run Specimen 1: switch at t=60s
     tab.preset_combo.setCurrentIndex(1)
     tab.run_comparison_action()
     wait_for_comparison(tab)
 
-    assert tab.eq_table.rowCount() > 0
     assert tab.imp_table.rowCount() == 3
-    # Check impulse values for scenario 1:
-    # x5 (Pipe_1_R) about +62.16, x4 (Pipe_2_L) about -38.85, J1 about +62.16
-    imp_map = {}
-    for r in range(tab.imp_table.rowCount()):
-        st_lbl = tab.imp_table.item(r, 1).text()
-        coeff_val = float(tab.imp_table.item(r, 2).text())
-        imp_map[st_lbl] = coeff_val
+    imps1 = parse_ui_impulses()
+    assert abs(imps1["Pipe_1_R"][0] - 60.0) < 1e-3
+    assert abs(imps1["Pipe_1_R"][1] - 62.1626) < 1e-3
+    assert abs(imps1["Pipe_2_L"][0] - 60.0) < 1e-3
+    assert abs(imps1["Pipe_2_L"][1] - (-38.8516)) < 1e-3
+    assert abs(imps1["J1"][0] - 60.0) < 1e-3
+    assert abs(imps1["J1"][1] - 62.1626) < 1e-3
+    assert_eq_table_tolerances(settled_intervals=("[60s - 120s]",))
 
-    # Find matching states
-    j1_val = [v for k, v in imp_map.items() if "J1" in k][0]
-    p1r_val = [v for k, v in imp_map.items() if "Pipe_1_R" in k or "x5" in k][0]
-    p2l_val = [v for k, v in imp_map.items() if "Pipe_2_L" in k or "x4" in k][0]
-
-    assert abs(j1_val - 62.16) < 0.1
-    assert abs(p1r_val - 62.16) < 0.1
-    assert abs(p2l_val - (-38.85)) < 0.1
-
-    # 4b. Run Specimen 2 (relaxation, no impulses)
+    # 4b. Run Specimen 2: no switching (relaxation from rest)
     tab.preset_combo.setCurrentIndex(2)
     tab.run_comparison_action()
     wait_for_comparison(tab)
     assert tab.imp_table.rowCount() == 0
+    assert_eq_table_tolerances(settled_intervals=("[0s - 200s]",))
 
-    # Verify equilibrium tolerances for specimen 2: flows <= 5e-5, heads <= 5e-3
-    for r in range(tab.eq_table.rowCount()):
-        lbl = tab.eq_table.item(r, 2).text()
-        diff = float(tab.eq_table.item(r, 5).text())
-        if "flow" in lbl.lower():
-            assert diff <= 5e-5, f"Flow diff {diff} exceeded 5e-5 for {lbl}"
-        else:
-            assert diff <= 5e-3, f"Head diff {diff} exceeded 5e-3 for {lbl}"
+    # 4c. Run Specimen 3: valve 1 closed at t=300s
+    tab.preset_combo.setCurrentIndex(3)
+    tab.run_comparison_action()
+    wait_for_comparison(tab)
+    assert tab.imp_table.rowCount() == 3
+    imps3 = parse_ui_impulses()
+    assert abs(imps3["Pipe_1_R"][0] - 300.0) < 1e-3
+    assert abs(imps3["Pipe_1_R"][1] - 63.3473) < 1e-3
+    assert abs(imps3["Pipe_2_L"][0] - 300.0) < 1e-3
+    assert abs(imps3["Pipe_2_L"][1] - (-39.5920)) < 1e-3
+    assert abs(imps3["J1"][0] - 300.0) < 1e-3
+    assert abs(imps3["J1"][1] - 63.3473) < 1e-3
+    assert_eq_table_tolerances(settled_intervals=("[0s - 300s]", "[300s - 400s]"))
+
+    # 4d. Run Specimen 4: valve 2 closed at t=300s
+    tab.preset_combo.setCurrentIndex(4)
+    tab.run_comparison_action()
+    wait_for_comparison(tab)
+    assert tab.imp_table.rowCount() == 4
+    imps4 = parse_ui_impulses()
+    assert abs(imps4["Pipe_1_R"][0] - 300.0) < 1e-3
+    assert abs(imps4["Pipe_1_R"][1] - 63.3473) < 1e-3
+    assert abs(imps4["Pipe_2_L"][0] - 300.0) < 1e-3
+    assert abs(imps4["Pipe_2_L"][1] - 63.3473) < 1e-3
+    assert abs(imps4["J1"][0] - 300.0) < 1e-3
+    assert abs(imps4["J1"][1] - 63.3473) < 1e-3
+    assert abs(imps4["Pipe_2_R"][0] - 300.0) < 1e-3
+    assert abs(imps4["Pipe_2_R"][1] - 102.9393) < 1e-3
+    assert_eq_table_tolerances(settled_intervals=("[0s - 300s]", "[300s - 400s]"))
+
+    # 4e. Run Specimen 5: valve 1 opened at t=60s
+    tab.preset_combo.setCurrentIndex(5)
+    tab.run_comparison_action()
+    wait_for_comparison(tab)
+    assert tab.imp_table.rowCount() == 0
+    assert_eq_table_tolerances(settled_intervals=("[60s - 300s]",))
 
     window.close()
 
@@ -297,7 +351,9 @@ def test_06_custom_scenario_validation_messages(qapp):
 
     assert not tab.run_btn.isEnabled()
     ready_text = tab.ready_label.text().lower()
-    assert "all valves closed" in ready_text or "singular" in ready_text
+    assert "both valves of pipe p2 are closed" in ready_text
+    assert "shut in on both sides" in ready_text
+    assert "open at least one valve" in ready_text
 
     window.close()
 

@@ -15,7 +15,7 @@ from core.models import Network
 from core.scenario import Scenario, ValveId, Mode
 from core.physics import PhysicsSettings
 from core.params import missing_parameters
-from core.dae_model import build_switched_dae, check_supported, UnsupportedNetworkError
+from core.dae_model import build_switched_dae, check_supported, UnsupportedNetworkError, steady_state
 from core.checks import validate_network
 from core.dae_solver import simulate, SimulationResult, SolverError
 from core.epanet_runner import run_epanet, EpanetResult, EpanetError
@@ -37,18 +37,35 @@ class EquilibriumRow:
     interval: str
     mode: str
     label: str
-    dae: float
+    dae_end: float
+    dae_eq: float
     epanet: float
-    diff: float
+    diff_end: float
+    diff_eq: float
+
+    @property
+    def dae(self) -> float:
+        """Backward compatibility alias for dae_end."""
+        return self.dae_end
+
+    @property
+    def diff(self) -> float:
+        """Backward compatibility alias for diff_eq."""
+        return self.diff_eq
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "interval": self.interval,
             "mode": self.mode,
             "label": self.label,
-            "dae": self.dae,
+            "dae_end": self.dae_end,
+            "dae_eq": self.dae_eq,
             "epanet": self.epanet,
-            "diff": self.diff,
+            "diff_end": self.diff_end,
+            "diff_eq": self.diff_eq,
+            # Backward compatibility aliases
+            "dae": self.dae_end,
+            "diff": self.diff_eq,
         }
 
 
@@ -308,30 +325,43 @@ def run_comparison(
         mode_tuple = tuple(m.state.get(v, 0) for v in valves_order)
         mode_str = f"({', '.join(str(s) for s in mode_tuple)})"
 
-        # Sampling instant: last report before interval ends
-        # If interval ends at total scenario end, compare at t_b; otherwise at t_b - 1.0
-        if abs(t_b - scenario.t_end) < 1e-6:
-            ct = t_b
-        else:
-            ct = max(t_a, t_b - 1.0)
+        # Steady-state equilibrium of this mode
+        try:
+            x_eq = steady_state(dae, m.state)
+        except Exception:
+            x_eq = np.zeros(dae.K, dtype=float)
 
-        idx_dae = int(np.argmin(np.abs(res_dae.t - ct)))
-        idx_ep = int(np.argmin(np.abs(res_ep.t - ct)))
+        # Sampling instant:
+        # For DAE: the last sample of the interval before the next switch.
+        # If t_b < scenario.t_end, there is a switch at t_b.
+        # simulate() places the pre-switch sample at t_b (first sample with t == t_b).
+        if t_b < scenario.t_end:
+            matches = np.where(np.abs(res_dae.t - t_b) < 1e-6)[0]
+            idx_dae = int(matches[0]) if len(matches) > 0 else int(np.argmin(np.abs(res_dae.t - t_b)))
+            # EPANET report before switch is at t_b - 1.0 s
+            idx_ep = int(np.argmin(np.abs(res_ep.t - (t_b - 1.0))))
+        else:
+            idx_dae = int(np.argmin(np.abs(res_dae.t - t_b)))
+            idx_ep = int(np.argmin(np.abs(res_ep.t - t_b)))
 
         interval_label = f"[{t_a:.0f}s - {t_b:.0f}s] Mode {mode_str}"
 
-        for lbl in dae.labels:
-            dae_val = float(res_dae.series(lbl)[idx_dae])
+        for idx_lbl, lbl in enumerate(dae.labels):
+            dae_end_val = float(res_dae.series(lbl)[idx_dae])
+            dae_eq_val = float(x_eq[idx_lbl])
             ep_val = float(res_ep.series(lbl)[idx_ep])
-            diff_val = abs(dae_val - ep_val)
+            diff_end_val = abs(dae_end_val - ep_val)
+            diff_eq_val = abs(dae_eq_val - ep_val)
 
             row = EquilibriumRow(
                 interval=interval_label,
                 mode=mode_str,
                 label=lbl,
-                dae=dae_val,
+                dae_end=dae_end_val,
+                dae_eq=dae_eq_val,
                 epanet=ep_val,
-                diff=diff_val,
+                diff_end=diff_end_val,
+                diff_eq=diff_eq_val,
             )
             eq_rows.append(row.to_dict())
 

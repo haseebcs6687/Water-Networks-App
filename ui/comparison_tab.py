@@ -350,14 +350,16 @@ class ComparisonTab(QWidget):
         eq_group = QGroupBox("Equilibrium comparison")
         eq_layout = QVBoxLayout(eq_group)
         self.eq_table = QTableWidget()
-        self.eq_table.setColumnCount(6)
+        self.eq_table.setColumnCount(8)
         self.eq_table.setHorizontalHeaderLabels([
             "Interval",
             "Mode",
             "State Label",
-            "DAE",
+            "DAE End",
+            "DAE Eq.",
             "EPANET",
-            "Difference",
+            "Diff (End vs EP)",
+            "Diff (Eq vs EP)",
         ])
         self.eq_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.eq_table.setMinimumHeight(160)
@@ -920,36 +922,60 @@ class ComparisonTab(QWidget):
 
         # 2. Equilibrium Comparison Table
         self.eq_table.setRowCount(len(res.equilibrium))
-        max_flow_diff = 0.0
-        max_head_diff = 0.0
+        intervals_summary: Dict[str, Dict[str, float]] = {}
 
         for r, row in enumerate(res.equilibrium):
+            inv = row["interval"]
+            if inv not in intervals_summary:
+                intervals_summary[inv] = {
+                    "max_flow_end": 0.0,
+                    "max_head_end": 0.0,
+                    "max_flow_eq": 0.0,
+                    "max_head_eq": 0.0,
+                }
+
             self.eq_table.setItem(r, 0, QTableWidgetItem(row["interval"]))
             self.eq_table.setItem(r, 1, QTableWidgetItem(row["mode"]))
             self.eq_table.setItem(r, 2, QTableWidgetItem(row["label"]))
 
-            it_dae = QTableWidgetItem(f"{row['dae']:.6f}")
-            it_dae.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.eq_table.setItem(r, 3, it_dae)
+            it_dae_end = QTableWidgetItem(f"{row.get('dae_end', row.get('dae', 0.0)):.6f}")
+            it_dae_end.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.eq_table.setItem(r, 3, it_dae_end)
+
+            it_dae_eq = QTableWidgetItem(f"{row.get('dae_eq', 0.0):.6f}")
+            it_dae_eq.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.eq_table.setItem(r, 4, it_dae_eq)
 
             it_ep = QTableWidgetItem(f"{row['epanet']:.6f}")
             it_ep.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.eq_table.setItem(r, 4, it_ep)
+            self.eq_table.setItem(r, 5, it_ep)
 
-            diff_val = row["diff"]
-            it_diff = QTableWidgetItem(f"{diff_val:.6e}")
-            it_diff.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.eq_table.setItem(r, 5, it_diff)
+            diff_end_val = row.get("diff_end", row.get("diff", 0.0))
+            it_diff_end = QTableWidgetItem(f"{diff_end_val:.6e}")
+            it_diff_end.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.eq_table.setItem(r, 6, it_diff_end)
+
+            diff_eq_val = row.get("diff_eq", 0.0)
+            it_diff_eq = QTableWidgetItem(f"{diff_eq_val:.6e}")
+            it_diff_eq.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.eq_table.setItem(r, 7, it_diff_eq)
 
             lbl = row["label"].lower()
             if "flow" in lbl:
-                max_flow_diff = max(max_flow_diff, diff_val)
+                intervals_summary[inv]["max_flow_end"] = max(intervals_summary[inv]["max_flow_end"], diff_end_val)
+                intervals_summary[inv]["max_flow_eq"] = max(intervals_summary[inv]["max_flow_eq"], diff_eq_val)
             else:
-                max_head_diff = max(max_head_diff, diff_val)
+                intervals_summary[inv]["max_head_end"] = max(intervals_summary[inv]["max_head_end"], diff_end_val)
+                intervals_summary[inv]["max_head_eq"] = max(intervals_summary[inv]["max_head_eq"], diff_eq_val)
 
-        self.eq_summary_label.setText(
-            f"Maximum differences across intervals: Flow = {max_flow_diff:.6e} m³/s, Head = {max_head_diff:.6e} m"
-        )
+        summary_parts = []
+        for inv, s in intervals_summary.items():
+            inv_short = inv.split()[0] if " " in inv else inv
+            summary_parts.append(
+                f"{inv_short}: End diff (Flow: {s['max_flow_end']:.2e}, Head: {s['max_head_end']:.2e}) | "
+                f"Eq diff (Flow: {s['max_flow_eq']:.2e}, Head: {s['max_head_eq']:.2e})"
+            )
+        self.eq_summary_label.setText("Max differences per interval: " + " ; ".join(summary_parts))
 
         # 3. Dirac Impulses Table
         self.imp_table.setRowCount(len(res.impulses))
