@@ -357,9 +357,9 @@ def generate_acceptance_report():
 
     # Dirac impulse differences vs analytical values (+62.16, -38.85, +62.16)
     dirac_analytical_map = {
+        (1, "Pipe_2_L"): -38.85,
         (1, "Pipe_1_R"): 62.16,
-        (3, "Pipe_2_L"): -38.85,
-        (4, "Pipe_1_R"): 62.16,
+        (1, "J1"): 62.16,
     }
     dirac_diffs = []
     for sd in scenarios_data:
