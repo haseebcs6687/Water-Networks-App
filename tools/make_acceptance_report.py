@@ -66,6 +66,30 @@ def get_git_info() -> Tuple[str, str, str]:
     return commit, branch, is_clean
 
 
+def round_up_1sigfig(val: float) -> float:
+    if val <= 0:
+        return 0.0
+    exp = math.floor(math.log10(val))
+    mantissa = val / (10 ** exp)
+    mantissa_ceil = math.ceil(mantissa - 1e-12)
+    if mantissa_ceil > 9:
+        mantissa_ceil = 1
+        exp += 1
+    return mantissa_ceil * (10 ** exp)
+
+
+def format_1sigfig(val: float) -> str:
+    r = round_up_1sigfig(val)
+    if r == 0:
+        return "0"
+    if r < 1e-2:
+        return f"{r:.0e}".replace("e-0", "e-").replace("e+0", "e+")
+    elif r < 1:
+        return f"{r:g}"
+    else:
+        return f"{r:.0f}"
+
+
 def generate_acceptance_report():
     """Execute real runs and generate release/ACCEPTANCE_REPORT.md and .txt."""
     release_dir = REPO_ROOT / "release"
@@ -318,12 +342,43 @@ def generate_acceptance_report():
     lines.append("")
     lines.append("---")
     lines.append("")
+
+    # Real maximum differences computed from the generated tables
+    diff_pencil_and_f = [
+        abs(b1_comp - b1_ref),
+        abs(b2_comp - b2_ref),
+        abs(beta_comp - beta_ref),
+        *[abs(float(f_comp[i]) - f_vec_ref[i]) for i in range(len(f_vec_ref))],
+        *[mr['diff_det'] for mr in mode_results]
+    ]
+    max_diff_pencil_f_det = max(diff_pencil_and_f)
+
+    max_diff_ss = max(mr['diff_ss'] for mr in mode_results)
+
+    # Dirac impulse differences vs analytical values (+62.16, -38.85, +62.16)
+    dirac_analytical_map = {
+        (1, "Pipe_1_R"): 62.16,
+        (3, "Pipe_2_L"): -38.85,
+        (4, "Pipe_1_R"): 62.16,
+    }
+    dirac_diffs = []
+    for sd in scenarios_data:
+        for imp in sd["impulses"]:
+            k = (sd["id"], imp["state"])
+            if k in dirac_analytical_map:
+                dirac_diffs.append(abs(imp["coefficient"] - dirac_analytical_map[k]))
+    max_diff_dirac = max(dirac_diffs) if dirac_diffs else 0.0
+
+    # DAE vs EPANET equilibria across all scenarios and intervals
+    all_eq_diffs = [abs(eq['diff_eq']) for sd in scenarios_data for eq in sd['equilibrium']]
+    max_diff_eq = max(all_eq_diffs) if all_eq_diffs else 0.0
+
     lines.append("## 4. Acceptance Conclusion")
     lines.append("")
-    lines.append("1. Pencil parameters (b1, b2, beta), gravity vector terms, and determinants match the reference formulas within 1e-9.")
-    lines.append("2. Mode steady states match the reference numbers within 5e-7 (reference values given to 6 decimal places).")
-    lines.append("3. Dirac impulse coefficients match the analytical momentum values (+62.16 m*s / -38.85 m*s / +62.16 m*s).")
-    lines.append("4. Steady states and interval equilibria between the DAE solver and official EPANET 2.3.5 engine match within 1.7e-5 across all scenarios.")
+    lines.append(f"1. Pencil parameters (b1, b2, beta), gravity vector terms, and determinants match the reference formulas within {format_1sigfig(max_diff_pencil_f_det)}.")
+    lines.append(f"2. Mode steady states match the reference numbers within {format_1sigfig(max_diff_ss)} (reference values given to 6 decimal places).")
+    lines.append(f"3. Dirac impulse coefficients match the analytical momentum values (+62.16 m*s / -38.85 m*s / +62.16 m*s) within {format_1sigfig(max_diff_dirac)} m*s.")
+    lines.append(f"4. Steady states and interval equilibria between the DAE solver and official EPANET 2.3.5 engine match within {format_1sigfig(max_diff_eq)} across all scenarios.")
     lines.append("")
     lines.append("---")
     lines.append("")

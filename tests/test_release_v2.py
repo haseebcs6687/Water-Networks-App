@@ -341,7 +341,7 @@ def test_no_placeholders_or_todos_in_release():
             for line in content.splitlines():
                 if "TODO" in line or "FIXME" in line:
                     pytest.fail(f"Forbidden placeholder/TODO found in {path.relative_to(REPO_ROOT)}: {line}")
-                if "<<" in line and "Questions or problems: <<Name: Abdul Haseeb,Gmail:abdulhaseeb6649@gmail.com>>" not in line:
+                if "<<" in line:
                     pytest.fail(f"Forbidden unreplaced placeholder found in {path.relative_to(REPO_ROOT)}: {line}")
             files_checked += 1
 
@@ -381,5 +381,107 @@ def test_valves_table_checkbox_contrast(qapp):
     light_border = QColor("#5A5A5A")
     ratio_light = contrast_ratio(light_border, light_bg)
     assert ratio_light >= 3.0, f"Light theme checkbox border contrast {ratio_light:.2f}:1 < 3:1"
+
+
+def test_acceptance_report_conclusions_within_limits():
+    """(x) Section 4: every 'within X' is >= the largest corresponding difference in the tables."""
+    mar.generate_acceptance_report()
+    report_path = REPO_ROOT / "release" / "ACCEPTANCE_REPORT.md"
+    assert report_path.exists()
+    text = report_path.read_text(encoding="utf-8")
+
+    sec4_match = re.search(r"## 4\. Acceptance Conclusion\s*(.*?)(?=\n##|\n---\n|\Z)", text, re.DOTALL)
+    assert sec4_match, "Section 4 not found in ACCEPTANCE_REPORT.md"
+    sec4_text = sec4_match.group(1)
+
+    within_matches = re.findall(r"within\s+([0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)", sec4_text)
+    assert len(within_matches) >= 4, f"Expected at least 4 'within <val>' in Section 4, got {len(within_matches)}"
+    limits = [float(w) for w in within_matches]
+
+    # Item 1: pencil parameters, gravity vector f, and determinants
+    t21_match = re.search(r"### 2\.1 Pencil Coefficients & Vector f\s*(.*?)(?=###|\Z)", text, re.DOTALL)
+    assert t21_match, "Table 2.1 not found"
+    t21_diffs = []
+    for line in t21_match.group(1).splitlines():
+        if line.strip().startswith("|") and "Parameter" not in line and "---" not in line:
+            cols = [c.strip() for c in line.split("|")[1:-1]]
+            if len(cols) >= 5:
+                try:
+                    t21_diffs.append(float(cols[4]))
+                except ValueError:
+                    pass
+    assert len(t21_diffs) > 0, "No diffs parsed from Table 2.1"
+
+    t22_match = re.search(r"### 2\.2 Mode Analysis & Regularity\s*(.*?)(?=###|\Z)", text, re.DOTALL)
+    assert t22_match, "Table 2.2 not found"
+    t22_diffs = []
+    for line in t22_match.group(1).splitlines():
+        if line.strip().startswith("|") and "Valve Mode" not in line and "---" not in line:
+            cols = [c.strip() for c in line.split("|")[1:-1]]
+            if len(cols) >= 4:
+                try:
+                    t22_diffs.append(float(cols[3]))
+                except ValueError:
+                    pass
+    assert len(t22_diffs) > 0, "No diffs parsed from Table 2.2"
+
+    max_diff_1 = max(t21_diffs + t22_diffs)
+    assert limits[0] >= max_diff_1 - 1e-15, f"Limit 1 ({limits[0]}) < max diff in Tables 2.1 & 2.2 ({max_diff_1})"
+
+    # Item 2: Mode steady states
+    t23_match = re.search(r"### 2\.3 Steady States of the Three Modes\s*(.*?)(?=\n## 3|\Z)", text, re.DOTALL)
+    assert t23_match, "Section 2.3 not found"
+    t23_diffs = []
+    for line in t23_match.group(1).splitlines():
+        if line.strip().startswith("|") and "State Label" not in line and "---" not in line:
+            cols = [c.strip() for c in line.split("|")[1:-1]]
+            if len(cols) >= 5:
+                try:
+                    t23_diffs.append(float(cols[4]))
+                except ValueError:
+                    pass
+    assert len(t23_diffs) > 0, "No diffs parsed from Section 2.3"
+    max_diff_2 = max(t23_diffs)
+    assert limits[1] >= max_diff_2 - 1e-15, f"Limit 2 ({limits[1]}) < max steady state diff ({max_diff_2})"
+
+    # Item 3: Dirac impulse coefficients vs analytical values (+62.16, -38.85, +62.16)
+    t31_match = re.search(r"### 3\.1 Dirac Impulses Summary\s*(.*?)(?=###|\Z)", text, re.DOTALL)
+    assert t31_match, "Section 3.1 not found"
+    analytical_map = {
+        ("Scenario 1", "Pipe_2_L"): -38.85,
+        ("Scenario 1", "Pipe_1_R"): 62.16,
+        ("Scenario 1", "J1"): 62.16,
+    }
+    dirac_diffs = []
+    for line in t31_match.group(1).splitlines():
+        if line.strip().startswith("|") and "Switch Time" not in line and "---" not in line:
+            cols = [c.strip() for c in line.split("|")[1:-1]]
+            if len(cols) >= 4:
+                sc = cols[0]
+                st = cols[2]
+                if (sc, st) in analytical_map:
+                    val = float(cols[3])
+                    dirac_diffs.append(abs(val - analytical_map[(sc, st)]))
+    assert len(dirac_diffs) == 3, f"Expected 3 Scenario 1 analytical Dirac impulses, got {len(dirac_diffs)}"
+    max_diff_3 = max(dirac_diffs)
+    assert limits[2] >= max_diff_3 - 1e-15, f"Limit 3 ({limits[2]}) < max Dirac diff ({max_diff_3})"
+
+    # Item 4: DAE vs EPANET equilibria across all scenarios
+    t32_match = re.search(r"### 3\.2 Maximum Differences per Scenario.*?\n(.*?)(?=Note on Scenario|\Z)", text, re.DOTALL)
+    assert t32_match, "Section 3.2 not found"
+    eq_diffs = []
+    for line in t32_match.group(1).splitlines():
+        if line.strip().startswith("|") and "Max Flow Diff" not in line and "---" not in line:
+            cols = [c.strip() for c in line.split("|")[1:-1]]
+            if len(cols) >= 5:
+                try:
+                    eq_diffs.append(float(cols[3]))
+                    eq_diffs.append(float(cols[4]))
+                except ValueError:
+                    pass
+    assert len(eq_diffs) > 0, "No equilibrium diffs parsed from Section 3.2"
+    max_diff_4 = max(eq_diffs)
+    assert limits[3] >= max_diff_4 - 1e-15, f"Limit 4 ({limits[3]}) < max equilibrium diff ({max_diff_4})"
+
 
 
