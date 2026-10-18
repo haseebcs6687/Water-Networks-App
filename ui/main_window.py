@@ -205,6 +205,8 @@ class MainWindow(QMainWindow):
         self.right_tabs.setStyleSheet(ss)
         if hasattr(self, "comparison_tab") and hasattr(self.comparison_tab, "results_tabs"):
             self.comparison_tab.results_tabs.setStyleSheet(ss)
+        if hasattr(self, "comparison_tab") and hasattr(self.comparison_tab, "update_theme_style"):
+            self.comparison_tab.update_theme_style(is_dark)
 
     def changeEvent(self, event):
         super().changeEvent(event)

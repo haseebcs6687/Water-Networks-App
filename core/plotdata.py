@@ -69,12 +69,19 @@ def default_states(result: ComparisonResult) -> List[str]:
 
 def _dae_mode_splits(result: ComparisonResult) -> List[int]:
     """Return 0-indexed split boundaries where DAE time restarts/switches."""
+    cached = getattr(result.dae, "_cached_splits", None)
+    if cached is not None:
+        return cached
     t = result.dae.t
-    splits = [0]
-    for i in range(len(t) - 1):
-        if t[i + 1] <= t[i]:
-            splits.append(i + 1)
-    splits.append(len(t))
+    if len(t) <= 1:
+        splits = [0, len(t)]
+    else:
+        idx = np.where(t[1:] <= t[:-1])[0] + 1
+        splits = [0] + idx.tolist() + [len(t)]
+    try:
+        result.dae._cached_splits = splits
+    except Exception:
+        pass
     return splits
 
 
@@ -108,6 +115,17 @@ def series(
     epanet_series : (t_array, y_array)
         EPANET reporting times and values.
     """
+    cache = getattr(result, "_cached_series", None)
+    if cache is None:
+        cache = {}
+        try:
+            result._cached_series = cache
+        except Exception:
+            pass
+    key = (label, kind)
+    if cache is not None and key in cache:
+        return cache[key]
+
     col = result.dae._col(label)
     elev = result.dae.elevations[col]
     offset = float(elev) if (kind == "total" and not math.isnan(elev)) else 0.0
@@ -133,7 +151,10 @@ def series(
     t_ep = result.epanet.t.copy()
     y_ep = (result.epanet.series(label) + offset).copy()
 
-    return dae_segments, jump_pairs, (t_ep, y_ep)
+    res_tuple = (dae_segments, jump_pairs, (t_ep, y_ep))
+    if cache is not None:
+        cache[key] = res_tuple
+    return res_tuple
 
 
 def decimate_series(

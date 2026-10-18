@@ -254,3 +254,130 @@ def test_readme_quoted_ui_names():
 
     for q in ui_quotes:
         assert q in ui_code, f"Quoted UI name {q!r} from README.txt not found in any ui/*.py file"
+
+
+def test_acceptance_report_compare_yourself_matches_tables():
+    """(vii) Section 'How You Can Compare Yourself' values match table values."""
+    report_path = REPO_ROOT / "release" / "ACCEPTANCE_REPORT.md"
+    if not report_path.exists():
+        mar.generate_acceptance_report()
+    text = report_path.read_text(encoding="utf-8")
+
+    # Parse '## How You Can Compare Yourself' section
+    comp_match = re.search(r"## How You Can Compare Yourself(.*?)(?=##|\Z)", text, re.DOTALL)
+    assert comp_match is not None, "Section 'How You Can Compare Yourself' not found"
+    comp_text = comp_match.group(1)
+
+    # 1. b1 = g * Area / L1 = 3.083335e-03 m2/s2
+    b1_m = re.search(r"b1\s*=\s*g\s*\*\s*Area\s*/\s*L1\s*=\s*([0-9.eE+-]+)\s*m2/s2", comp_text)
+    assert b1_m, "b1 not found in Compare Yourself"
+    b1_val = float(b1_m.group(1))
+
+    # 2. b2 = g * Area / L2 = 4.933336e-03 m2/s2
+    b2_m = re.search(r"b2\s*=\s*g\s*\*\s*Area\s*/\s*L2\s*=\s*([0-9.eE+-]+)\s*m2/s2", comp_text)
+    assert b2_m, "b2 not found in Compare Yourself"
+    b2_val = float(b2_m.group(1))
+
+    # 3. Steady flow Q of mode (1,1): 0.195321 m3/s
+    q_ss_m = re.search(r"Steady flow Q of mode \(1,1\):\s*([0-9.]+)\s*m3/s", comp_text)
+    assert q_ss_m, "Steady flow Q of mode (1,1) not found in Compare Yourself"
+    q_ss_val = float(q_ss_m.group(1))
+
+    # 4. x5 of mode (0,1): 45.000000 m
+    x5_m = re.search(r"x5 of mode \(0,1\):\s*([0-9.]+)\s*m", comp_text)
+    assert x5_m, "x5 of mode (0,1) not found in Compare Yourself"
+    x5_val = float(x5_m.group(1))
+
+    # 5. Dirac impulse coefficient of scenario 1: +62.1626 m*s (reported as +62.16 m*s)
+    dirac_m = re.search(r"Dirac impulse coefficient of scenario 1:\s*\+([0-9.]+)\s*m\*s", comp_text)
+    assert dirac_m, "Dirac impulse not found in Compare Yourself"
+    dirac_val = float(dirac_m.group(1))
+
+    # Parse Table 2.1 (b1 and b2)
+    t21_b1_m = re.search(r"\|\s*b1 = g \* Area / L1\s*\|\s*[0-9.eE+-]+\s*\|\s*([0-9.eE+-]+)\s*\|", text)
+    assert t21_b1_m, "b1 not found in Table 2.1"
+    assert abs(b1_val - float(t21_b1_m.group(1))) < 1e-10
+
+    t21_b2_m = re.search(r"\|\s*b2 = g \* Area / L2\s*\|\s*[0-9.eE+-]+\s*\|\s*([0-9.eE+-]+)\s*\|", text)
+    assert t21_b2_m, "b2 not found in Table 2.1"
+    assert abs(b2_val - float(t21_b2_m.group(1))) < 1e-10
+
+    # Parse Section 2.3 Mode (1,1) steady flow Q
+    m11_section = re.search(r"#### Mode \(1,1\) All open.*?(?=####|\Z)", text, re.DOTALL)
+    assert m11_section, "Mode (1,1) section not found"
+    t23_q_m = re.search(r"\|\s*Pipe_1_Flow\s*\|\s*[0-9.]+\s*\|\s*([0-9.]+)\s*\|", m11_section.group(0))
+    assert t23_q_m, "Pipe_1_Flow not found in Mode (1,1) table"
+    assert abs(q_ss_val - float(t23_q_m.group(1))) < 1e-6
+
+    # Parse Section 2.3 Mode (0,1) x5 (Pipe_1_R)
+    m01_section = re.search(r"#### Mode \(0,1\) Valve 1 closed.*?(?=####|\Z)", text, re.DOTALL)
+    assert m01_section, "Mode (0,1) section not found"
+    t23_x5_m = re.search(r"\|\s*Pipe_1_R\s*\|\s*[0-9.]+\s*\|\s*([0-9.]+)\s*\|", m01_section.group(0))
+    assert t23_x5_m, "Pipe_1_R not found in Mode (0,1) table"
+    assert abs(x5_val - float(t23_x5_m.group(1))) < 1e-6
+
+    # Parse Table 3.1 (Scenario 1 Dirac impulse for Pipe_1_R)
+    t31_dirac_m = re.search(r"\|\s*Scenario 1\s*\|\s*60\.0\s*\|\s*Pipe_1_R\s*\|\s*\+([0-9.]+)\s*\|", text)
+    assert t31_dirac_m, "Pipe_1_R Dirac impulse not found in Table 3.1"
+    table_dirac_val = float(t31_dirac_m.group(1))
+    assert abs(dirac_val - table_dirac_val) < 1e-4
+    assert abs(table_dirac_val - 62.1626) < 1e-3
+
+
+def test_no_placeholders_or_todos_in_release():
+    """(viii) Guard: Packaging files in release/ must NOT contain '<<', 'TODO', or 'FIXME'."""
+    release_dir = REPO_ROOT / "release"
+    assert release_dir.exists()
+
+    text_extensions = {".txt", ".md", ".bat", ".inp", ".wnet", ".csv", ".json"}
+    files_checked = 0
+
+    for path in release_dir.rglob("*"):
+        if path.is_file() and path.suffix.lower() in text_extensions:
+            # Skip binary or zip files
+            content = path.read_text(encoding="utf-8", errors="replace")
+            for line in content.splitlines():
+                if "TODO" in line or "FIXME" in line:
+                    pytest.fail(f"Forbidden placeholder/TODO found in {path.relative_to(REPO_ROOT)}: {line}")
+                if "<<" in line and "Questions or problems: <<Name: Abdul Haseeb,Gmail:abdulhaseeb6649@gmail.com>>" not in line:
+                    pytest.fail(f"Forbidden unreplaced placeholder found in {path.relative_to(REPO_ROOT)}: {line}")
+            files_checked += 1
+
+    assert files_checked >= 8, f"Expected at least 8 release text files checked, got {files_checked}"
+
+
+def test_valves_table_checkbox_contrast(qapp):
+    """(ix) Valves table checkboxes: border contrast >= 3:1 against background in dark and light themes."""
+    from PySide6.QtGui import QPalette, QColor, QPixmap, QPainter
+    from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+    from PySide6.QtCore import Qt
+
+    def rel_luminance(c: QColor) -> float:
+        def to_linear(v):
+            v_norm = v / 255.0
+            return v_norm / 12.92 if v_norm <= 0.04045 else ((v_norm + 0.055) / 1.055) ** 2.4
+        r = to_linear(c.red())
+        g = to_linear(c.green())
+        b = to_linear(c.blue())
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    def contrast_ratio(c1: QColor, c2: QColor) -> float:
+        l1 = rel_luminance(c1)
+        l2 = rel_luminance(c2)
+        hi = max(l1, l2)
+        lo = min(l1, l2)
+        return (hi + 0.05) / (lo + 0.05)
+
+    # 1. Dark theme: background #1E1E1E, indicator border #A8A8A8
+    dark_bg = QColor("#1E1E1E")
+    dark_border = QColor("#A8A8A8")
+    ratio_dark = contrast_ratio(dark_border, dark_bg)
+    assert ratio_dark >= 3.0, f"Dark theme checkbox border contrast {ratio_dark:.2f}:1 < 3:1"
+
+    # 2. Light theme: background #FFFFFF, indicator border #5A5A5A
+    light_bg = QColor("#FFFFFF")
+    light_border = QColor("#5A5A5A")
+    ratio_light = contrast_ratio(light_border, light_bg)
+    assert ratio_light >= 3.0, f"Light theme checkbox border contrast {ratio_light:.2f}:1 < 3:1"
+
+

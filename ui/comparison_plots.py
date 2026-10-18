@@ -109,6 +109,25 @@ def make_tick_formatter(get_limits_fn):
     return FuncFormatter(_format)
 
 
+from matplotlib.font_manager import FontProperties
+
+_FONT_PROP_CACHE: Dict[float, FontProperties] = {}
+_TEXT_WIDTH_CACHE: Dict[Tuple[str, float, float], float] = {}
+
+
+def _cached_text_width(renderer, text: str, size: float) -> float:
+    key = (text, size, renderer.dpi)
+    val = _TEXT_WIDTH_CACHE.get(key)
+    if val is None:
+        fp = _FONT_PROP_CACHE.get(size)
+        if fp is None:
+            fp = FontProperties(size=size)
+            _FONT_PROP_CACHE[size] = fp
+        val = renderer.get_text_width_height_descent(text, fp, False)[0]
+        _TEXT_WIDTH_CACHE[key] = val
+    return val
+
+
 def draw_comparison(
     fig: Figure,
     result: Optional[ComparisonResult],
@@ -129,37 +148,48 @@ def draw_comparison(
         - 'show_dirac': bool (default True)
         - 'title': optional scenario title
     """
-    fig.clear()
-    fig.patch.set_facecolor("white")
-    fig.set_layout_engine("constrained")
+    opts = options or {}
+    selected = opts.get("selected_states")
+    if not selected and result is not None:
+        selected = default_states(result)
+    elif not selected:
+        selected = []
+    head_mode = opts.get("head_mode", "pressure")
+    show_dirac = opts.get("show_dirac", True)
+
+    n_panels = len(selected)
 
     if result is None:
+        fig.clf()
+        fig.patch.set_facecolor("white")
         ax = fig.add_subplot(111)
         ax.set_facecolor("white")
+        hint = "No results yet. Fill in the network, choose the valves and scenario on the left, then press Run."
+        fig_w = fig.bbox.width if hasattr(fig, "bbox") and fig.bbox.width > 0 else 600
+        max_chars = max(30, int((fig_w * 0.72) / 8.5))
+        import textwrap
+        wrapped_hint = textwrap.fill(hint, width=max_chars)
         ax.text(
             0.5,
             0.5,
-            "No results yet. Fill in the network, choose the valves and scenario on the left, then press Run.",
+            wrapped_hint,
             horizontalalignment="center",
             verticalalignment="center",
             transform=ax.transAxes,
             color="#666666",
             fontsize=11,
-            wrap=True,
+            multialignment="center",
         )
         ax.axis("off")
         fig.canvas.draw_idle()
         return
 
-    opts = options or {}
-    selected = opts.get("selected_states")
-    if not selected:
-        selected = default_states(result)
-    head_mode = opts.get("head_mode", "pressure")
-    show_dirac = opts.get("show_dirac", True)
+    if not hasattr(fig.canvas, "get_renderer"):
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        FigureCanvasAgg(fig)
 
-    n_panels = len(selected)
     if n_panels == 0:
+        fig.clf()
         ax = fig.add_subplot(111)
         ax.text(0.5, 0.5, "No states selected.", ha="center", va="center", color="#888888")
         ax.axis("off")
@@ -183,13 +213,30 @@ def draw_comparison(
         and all(s in result.dae.labels for s in ["Pipe_1_Flow", "Pipe_2_Flow", "Pipe_1_R", "Pipe_2_L", "Pipe_2_R"])
     )
 
-    specimen_labels = {
+    specimen_labels_full = {
         "Pipe_1_Flow": "x1 = Q1 [m³/s]",
         "Pipe_2_Flow": "x2 = Q2 [m³/s]",
-        "Pipe_1_R": "x5 pipe-1 end [m]",
-        "Pipe_2_L": "x4 d/s of V1 [m]",
-        "Pipe_2_R": "x6 pipe-2 end [m]",
+        "Pipe_1_R": f"x5 pipe-1 end {'total head ' if head_mode == 'total' else ''}[m]",
+        "Pipe_2_L": f"x4 d/s of V1 {'total head ' if head_mode == 'total' else ''}[m]",
+        "Pipe_2_R": f"x6 pipe-2 end {'total head ' if head_mode == 'total' else ''}[m]",
     }
+    specimen_labels_short = {
+        "Pipe_1_Flow": "x1 [m³/s]",
+        "Pipe_2_Flow": "x2 [m³/s]",
+        "Pipe_1_R": "x5 [m]",
+        "Pipe_2_L": "x4 [m]",
+        "Pipe_2_R": "x6 [m]",
+    }
+
+    def get_labels_pair(lbl_name: str) -> Tuple[str, str]:
+        if is_specimen and lbl_name in specimen_labels_full:
+            return specimen_labels_full[lbl_name], specimen_labels_short[lbl_name]
+        if "Flow" in lbl_name:
+            return f"{lbl_name}  Q [m³/s]", f"{lbl_name} [m³/s]"
+        return (
+            f"{lbl_name}  {'total head [m]' if head_mode == 'total' else 'pressure head [m]'}",
+            f"{lbl_name} [m]",
+        )
 
     # Precompute Dirac impulses
     all_imp_arrows = impulse_arrows(result, selected) if show_dirac else {lbl: [] for lbl in selected}
@@ -206,17 +253,15 @@ def draw_comparison(
             if len(y_ep) > 0:
                 global_max_flow = max(global_max_flow, float(np.max(np.abs(y_ep))))
 
-    axes = fig.subplots(nrows=n_panels, ncols=1, sharex=True, squeeze=False)[:, 0]
-
-    from PySide6.QtWidgets import QApplication
-    _app = QApplication.instance()
-    if _app is not None:
-        _app.processEvents()
+    if len(fig.axes) == n_panels:
+        axes = np.array(fig.axes)
+        for ax in axes:
+            ax.clear()
+    else:
+        fig.clf()
+        axes = fig.subplots(nrows=n_panels, ncols=1, sharex=True, squeeze=False)[:, 0]
 
     for r, lbl in enumerate(selected):
-        if _app is not None:
-            _app.processEvents()
-
         ax = axes[r]
         ax.set_facecolor("white")
         ax.grid(True, alpha=0.12, color="gray", linestyle="-")
@@ -231,9 +276,10 @@ def draw_comparison(
 
         dae_segs, jumps, ep_data = series(result, lbl, kind=head_mode)
 
-        # 1. DAE segments (one per mode, solid line, decimated to <= 4000 pts for drawing only)
+        # 1. DAE segments (one per mode, solid line, decimated to <= max_pts for drawing only)
+        max_pts = opts.get("max_points", 4000)
         for tk, yk in dae_segs:
-            t_plot, y_plot = decimate_series(tk, yk, max_points=4000)
+            t_plot, y_plot = decimate_series(tk, yk, max_points=max_pts)
             ax.plot(t_plot, y_plot, "-", color=cD, linewidth=1.6)
 
         # 2. Dotted jump line and vertical switch line
@@ -250,17 +296,9 @@ def draw_comparison(
         t_ep, y_ep = ep_data
         ax.plot(t_ep, y_ep, "-", color=cE, linewidth=0.9, drawstyle="steps-post", zorder=4)
 
-        # 4. Y-axis label
-        if is_specimen and lbl in specimen_labels:
-            ylab = specimen_labels[lbl]
-            if head_mode == "total" and "[m]" in ylab:
-                ylab = ylab.replace("[m]", "total head [m]")
-        else:
-            if "Flow" in lbl:
-                ylab = f"{lbl}  Q [m³/s]"
-            else:
-                ylab = f"{lbl}  {'total head [m]' if head_mode == 'total' else 'pressure head [m]'}"
-        ax.set_ylabel(ylab, fontsize=9)
+        # 4. Y-axis label (initial setting)
+        ylab_init, _ = get_labels_pair(lbl)
+        ax.set_ylabel(ylab_init, fontsize=9)
 
         # 5. Dirac arrows
         yl = ax.get_ylim()
@@ -342,14 +380,23 @@ def draw_comparison(
 
             line_dae = Line2D([0], [0], color=cD, linewidth=1.6)
             line_ep = Line2D([0], [0], color=cE, linewidth=0.9)
+            leg_labels = ["switched DAE", engine_label(result)]
 
             fig_w = fig.bbox.width
+            engine = fig.get_layout_engine()
+
             if fig_w < 800:
+                if engine and hasattr(engine, "set"):
+                    engine.set(rect=[0.0, 0.0, 1.0, 1.0])
                 ax.set_title(title_text, fontsize=9.5, wrap=True)
-                leg_y = 1.25 if "\n" in title_text else 1.20
+                panel_h_est = max(30.0, (fig.bbox.height - 60.0) / max(1, n_panels))
+                if panel_h_est < 130.0:
+                    leg_y = 1.50 if "\n" in title_text else 1.32
+                else:
+                    leg_y = 1.35 if "\n" in title_text else 1.22
                 ax.legend(
                     [line_dae, line_ep],
-                    ["switched DAE", engine_label(result)],
+                    leg_labels,
                     loc="lower center",
                     bbox_to_anchor=(0.5, leg_y),
                     ncol=2,
@@ -357,10 +404,21 @@ def draw_comparison(
                     fontsize=8,
                 )
             else:
+                renderer = fig.canvas.get_renderer()
+                w_max = max(
+                    _cached_text_width(renderer, lbl, 8.5)
+                    for lbl in leg_labels
+                )
+                leg_w_px = w_max + 75.0
+                margin_px = leg_w_px + 28.0
+                right_rect = max(0.60, min(0.92, (fig_w - margin_px) / fig_w))
+                if engine and hasattr(engine, "set"):
+                    engine.set(rect=[0.0, 0.0, right_rect, 1.0])
+
                 ax.set_title(title_text, fontsize=10, pad=8, wrap=True)
                 ax.legend(
                     [line_dae, line_ep],
-                    ["switched DAE", engine_label(result)],
+                    leg_labels,
                     loc="center left",
                     bbox_to_anchor=(1.02, 0.5),
                     frameon=False,
@@ -371,6 +429,67 @@ def draw_comparison(
         if r == n_panels - 1:
             ax.xaxis.set_major_formatter(make_tick_formatter(ax.get_xlim))
             ax.set_xlabel("t [s]", fontsize=10)
+
+    # Adaptive Y-label sizing and short form
+    renderer = fig.canvas.get_renderer()
+    panel_est_h = max(30.0, (fig.bbox.height - 60.0) / max(1, n_panels))
+    shortened_any = False
+    for r, lbl in enumerate(selected):
+        ax = axes[r]
+        full_txt, short_txt = get_labels_pair(lbl)
+        ax_h = panel_est_h
+
+        chosen_txt = full_txt
+        chosen_fs = 9.0
+
+        w9 = _cached_text_width(renderer, full_txt, 9.0)
+        w8 = _cached_text_width(renderer, full_txt, 8.0)
+        w7 = _cached_text_width(renderer, full_txt, 7.0)
+
+        if w9 <= 0.82 * ax_h:
+            chosen_txt, chosen_fs = full_txt, 9.0
+        elif w8 <= 0.82 * ax_h:
+            chosen_txt, chosen_fs = full_txt, 8.0
+        elif w7 <= 0.82 * ax_h:
+            chosen_txt, chosen_fs = full_txt, 7.0
+        else:
+            shortened_any = True
+            sw9 = _cached_text_width(renderer, short_txt, 9.0)
+            sw8 = _cached_text_width(renderer, short_txt, 8.0)
+            if sw9 <= 0.85 * ax_h:
+                chosen_txt, chosen_fs = short_txt, 9.0
+            elif sw8 <= 0.85 * ax_h:
+                chosen_txt, chosen_fs = short_txt, 8.0
+            else:
+                chosen_txt, chosen_fs = short_txt, 7.0
+
+        ax.set_ylabel(chosen_txt, fontsize=chosen_fs)
+
+    fig.align_ylabels()
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+
+    # Verify no two adjacent y-labels overlap
+    for r in range(n_panels - 1):
+        bb_top = axes[r].yaxis.label.get_window_extent(renderer)
+        bb_bot = axes[r + 1].yaxis.label.get_window_extent(renderer)
+        gap = bb_top.y0 - bb_bot.y1
+        if gap < 6.0:
+            shortened_any = True
+            _, short_top = get_labels_pair(selected[r])
+            _, short_bot = get_labels_pair(selected[r + 1])
+            axes[r].set_ylabel(short_top, fontsize=7.0)
+            axes[r + 1].set_ylabel(short_bot, fontsize=7.0)
+
+    if shortened_any and is_specimen:
+        fig.text(
+            0.5,
+            0.008,
+            "States: x1: Pipe 1 Flow, x2: Pipe 2 Flow, x4: Pipe 2 (d/s of V1), x5: Pipe 1 (end), x6: Pipe 2 (end)",
+            ha="center",
+            fontsize=7.5,
+            color="#555555",
+        )
 
     fig.align_ylabels()
     fig.canvas.draw_idle()
@@ -825,7 +944,7 @@ class ComparisonPlots(QWidget):
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["time", "state", "coefficient"])
+            writer.writerow(["time", "state", "coefficient (m*s)"])
             for imp in res.dae.impulses:
                 for idx, lbl in enumerate(res.dae.labels):
                     coeff = float(imp.coefficients[idx])

@@ -35,10 +35,9 @@ from core import (
 )
 
 # ---------------------------------------------------------------------------
-# Import legacy with streamlit and pandas mocked
+# Import legacy with streamlit mocked
 # ---------------------------------------------------------------------------
 sys.modules.setdefault("streamlit", MagicMock())
-sys.modules.setdefault("pandas", MagicMock())
 
 import legacy.streamlit_app as _legacy  # noqa: E402
 

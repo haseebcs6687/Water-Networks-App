@@ -17,8 +17,8 @@ import copy
 import math
 from typing import Dict, List, Optional, Tuple, Any
 
-from PySide6.QtCore import Qt, QThread, Signal, QObject, QSize
-from PySide6.QtGui import QColor, QFont, QKeySequence, QValidator
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QSize, QEvent
+from PySide6.QtGui import QColor, QFont, QKeySequence, QValidator, QPalette
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -245,6 +245,7 @@ class ComparisonTab(QWidget):
         self._updating_ui: bool = False
 
         self._init_ui()
+        self.update_theme_style()
         self.refresh()
 
     def _init_ui(self):
@@ -567,7 +568,7 @@ class ComparisonTab(QWidget):
         self.imp_table.setHorizontalHeaderLabels([
             "Time (s)",
             "State Label",
-            "Coefficient",
+            "Coefficient (m*s)",
             "EPANET",
         ])
         imp_layout.addWidget(self.imp_table, 1)
@@ -1313,3 +1314,29 @@ class ComparisonTab(QWidget):
         if self._thread and self._thread.isRunning():
             self._thread.quit()
             self._thread.wait(3000)
+
+    def update_theme_style(self, is_dark: Optional[bool] = None):
+        """Ensure valves table checkboxes have >= 3:1 contrast in dark and light themes."""
+        if is_dark is None:
+            is_dark = self.palette().color(QPalette.Window).value() < 128
+        border_color = "#A8A8A8" if is_dark else "#5A5A5A"
+        bg_color = "#252526" if is_dark else "#FFFFFF"
+        ss = f"""
+        QTableWidget::indicator {{
+            width: 14px;
+            height: 14px;
+            border: 2px solid {border_color};
+            border-radius: 2px;
+            background-color: {bg_color};
+        }}
+        QTableWidget::indicator:checked {{
+            border: 2px solid {border_color};
+            background-color: #007ACC;
+        }}
+        """
+        self.valves_table.setStyleSheet(ss)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.PaletteChange:
+            self.update_theme_style()

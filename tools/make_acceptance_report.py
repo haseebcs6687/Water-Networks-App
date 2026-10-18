@@ -150,10 +150,15 @@ def generate_acceptance_report():
         sc = specimen_scenario(sc_id)
         comp = run_comparison(net, sc, phys)
 
-        diff_ends = [abs(r["diff_end"]) for r in comp.equilibrium]
-        diff_eqs = [abs(r["diff_eq"]) for r in comp.equilibrium]
-        max_diff_end = max(diff_ends) if diff_ends else 0.0
-        max_diff_eq = max(diff_eqs) if diff_eqs else 0.0
+        flow_ends = [abs(r["diff_end"]) for r in comp.equilibrium if "flow" in r["label"].lower()]
+        head_ends = [abs(r["diff_end"]) for r in comp.equilibrium if "flow" not in r["label"].lower()]
+        flow_eqs = [abs(r["diff_eq"]) for r in comp.equilibrium if "flow" in r["label"].lower()]
+        head_eqs = [abs(r["diff_eq"]) for r in comp.equilibrium if "flow" not in r["label"].lower()]
+
+        max_flow_end = max(flow_ends) if flow_ends else 0.0
+        max_head_end = max(head_ends) if head_ends else 0.0
+        max_flow_eq = max(flow_eqs) if flow_eqs else 0.0
+        max_head_eq = max(head_eqs) if head_eqs else 0.0
 
         scenarios_data.append({
             "id": sc_id,
@@ -161,8 +166,10 @@ def generate_acceptance_report():
             "t_end": sc.t_end,
             "impulses": comp.impulses,
             "equilibrium": comp.equilibrium,
-            "max_diff_end": max_diff_end,
-            "max_diff_eq": max_diff_eq,
+            "max_flow_end": max_flow_end,
+            "max_head_end": max_head_end,
+            "max_flow_eq": max_flow_eq,
+            "max_head_eq": max_head_eq,
             "warnings": comp.warnings,
         })
 
@@ -192,11 +199,12 @@ def generate_acceptance_report():
     lines.append("## How You Can Compare Yourself")
     lines.append("")
     lines.append("You can directly verify these numbers in your own MATLAB workspace by checking:")
-    lines.append("1. b1 = g * Area / L1 = 3.083335e-03 m2/s")
-    lines.append("2. b2 = g * Area / L2 = 4.933336e-03 m2/s")
-    lines.append("3. Steady flow Q of mode (1,1): 0.195321 m3/s")
-    lines.append("4. x5 of mode (0,1): 45.000000 m")
-    lines.append("5. Dirac impulse coefficient of scenario 1: +62.1557 m (reported as +62.16 m)")
+    lines.append(f"1. b1 = g * Area / L1 = {b1_comp:.6e} m2/s2")
+    lines.append(f"2. b2 = g * Area / L2 = {b2_comp:.6e} m2/s2")
+    lines.append(f"3. Steady flow Q of mode (1,1): {mode_results[0]['ss_comp'][0]:.6f} m3/s")
+    lines.append(f"4. x5 of mode (0,1): {mode_results[1]['ss_comp'][4]:.6f} m")
+    sc1_dirac = next(imp['coefficient'] for imp in scenarios_data[0]['impulses'] if imp['state'] == 'Pipe_1_R')
+    lines.append(f"5. Dirac impulse coefficient of scenario 1: {sc1_dirac:+.4f} m*s (reported as {sc1_dirac:+.2f} m*s)")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -204,9 +212,10 @@ def generate_acceptance_report():
     lines.append("")
     lines.append("In EPANET, pipes are governed by standard empirical friction equations and do not include")
     lines.append("instantaneous valve-closure dynamics or Dirac impulses. To faithfully mirror the switching")
-    lines.append("and friction formulations of the DAE model, the generated .inp files introduce extra helper")
-    lines.append("junctions (_L and _R) positioned 20% along each pipe, represent valves as Throttle Control Valves")
-    lines.append("(TCVs) with zero minor loss when open, and represent constant Darcy friction as an equivalent")
+    lines.append("and friction formulations of the DAE model, the helper nodes \"_L\" and \"_R\" exist only on")
+    lines.append("pipes that have a valve and are the two sides of the valve (the 20% position along the pipe")
+    lines.append("is only where they are drawn in [COORDINATES]). Valves are represented as Throttle Control Valves")
+    lines.append("(TCVs) with zero minor loss when open, and constant Darcy friction is represented as an equivalent")
     lines.append("minor loss on a 1 cm stub pipe. Switching is automated using scheduled EPANET [CONTROLS] at")
     lines.append("whole-second intervals with a 1 s hydraulic timestep.")
     lines.append("")
@@ -239,11 +248,11 @@ def generate_acceptance_report():
     lines.append("")
     lines.append("| Parameter | Independent reference (own re-computation of the formulas in your MATLAB file) | Computed (App) | Unit | Absolute Difference |")
     lines.append("|---|---|---|---|---|")
-    lines.append(f"| b1 = g * Area / L1 | {b1_ref:.6e} | {b1_comp:.6e} | m2/s | {abs(b1_comp - b1_ref):.2e} |")
-    lines.append(f"| b2 = g * Area / L2 | {b2_ref:.6e} | {b2_comp:.6e} | m2/s | {abs(b2_comp - b2_ref):.2e} |")
-    lines.append(f"| beta = b1 * b2 / (b1 + b2) | {beta_ref:.6e} | {beta_comp:.6e} | m2/s | {abs(beta_comp - beta_ref):.2e} |")
-    lines.append(f"| f[0] (Pipe 1 gravity term) | {f_vec_ref[0]:.6e} | {float(f_comp[0]):.6e} | m/s2 | {abs(float(f_comp[0]) - f_vec_ref[0]):.2e} |")
-    lines.append(f"| f[1] (Pipe 2 gravity term) | {f_vec_ref[1]:.6e} | {float(f_comp[1]):.6e} | m/s2 | {abs(float(f_comp[1]) - f_vec_ref[1]):.2e} |")
+    lines.append(f"| b1 = g * Area / L1 | {b1_ref:.6e} | {b1_comp:.6e} | m2/s2 | {abs(b1_comp - b1_ref):.2e} |")
+    lines.append(f"| b2 = g * Area / L2 | {b2_ref:.6e} | {b2_comp:.6e} | m2/s2 | {abs(b2_comp - b2_ref):.2e} |")
+    lines.append(f"| beta = b1 * b2 / (b1 + b2) | {beta_ref:.6e} | {beta_comp:.6e} | m2/s2 | {abs(beta_comp - beta_ref):.2e} |")
+    lines.append(f"| f[0] (Pipe 1 gravity term) | {f_vec_ref[0]:.6e} | {float(f_comp[0]):.6e} | m3/s2 | {abs(float(f_comp[0]) - f_vec_ref[0]):.2e} |")
+    lines.append(f"| f[1] (Pipe 2 gravity term) | {f_vec_ref[1]:.6e} | {float(f_comp[1]):.6e} | m3/s2 | {abs(float(f_comp[1]) - f_vec_ref[1]):.2e} |")
     lines.append(f"| f[7] (Reservoir 1 boundary) | {f_vec_ref[7]:.6f} | {float(f_comp[7]):.6f} | m | {abs(float(f_comp[7]) - f_vec_ref[7]):.2e} |")
     lines.append(f"| f[8] (Reservoir 2 boundary) | {f_vec_ref[8]:.6f} | {float(f_comp[8]):.6f} | m | {abs(float(f_comp[8]) - f_vec_ref[8]):.2e} |")
     lines.append("")
@@ -274,36 +283,36 @@ def generate_acceptance_report():
     lines.append("")
     lines.append("### 3.1 Dirac Impulses Summary")
     lines.append("")
+    lines.append("The Dirac impulse coefficient c in c*delta(t - ts) has units of m*s (hydraulic head multiplied by time).")
+    lines.append("")
     lines.append("| Scenario | Switch Time (s) | Affected State | Signed Impulse Coefficient | Unit | EPANET Impulse |")
     lines.append("|---|---|---|---|---|---|")
     imp_found = False
     for sd in scenarios_data:
         for imp in sd["impulses"]:
             imp_found = True
-            lines.append(f"| Scenario {sd['id']} | {imp['time']:.1f} | {imp['state']} | {imp['coefficient']:+.4f} | m | {imp['epanet']} |")
+            lines.append(f"| Scenario {sd['id']} | {imp['time']:.1f} | {imp['state']} | {imp['coefficient']:+.4f} | m*s | {imp['epanet']} |")
     if not imp_found:
-        lines.append("| - | - | None | 0.0000 | m | none |")
+        lines.append("| - | - | None | 0.0000 | m*s | none |")
     lines.append("")
     lines.append("### 3.2 Maximum Differences per Scenario (DAE vs EPANET)")
     lines.append("")
-    lines.append("| Scenario | Max Interval-End Difference | Max Equilibrium Difference | Notes |")
-    lines.append("|---|---|---|---|")
+    lines.append("| Scenario | Max Flow Diff at Interval End (m3/s) | Max Head Diff at Interval End (m) | Max Flow Diff at Equilibrium (m3/s) | Max Head Diff at Equilibrium (m) | Notes |")
+    lines.append("|---|---|---|---|---|---|")
     for sd in scenarios_data:
         sc_num = sd['id']
         note = ""
         if sc_num == 1:
-            diff_end_str = f"{sd['max_diff_end']:.6f} m3/s"
-            diff_eq_str = f"{sd['max_diff_eq']:.6f} m"
-            note = "Flow difference at t=60s; DAE starts from rest and needs time to reach steady flow; equilibrium matches exactly."
+            note = "Flow difference at t=60s; DAE starts from rest and needs time to reach steady flow; equilibrium matches within 1.7e-5."
         elif sc_num == 2:
-            diff_end_str = f"{sd['max_diff_end']:.6f} m3/s"
-            diff_eq_str = f"{sd['max_diff_eq']:.6f} m"
-            note = "Relaxation from rest onto EPANET steady flow."
+            note = "Relaxation from rest onto EPANET steady flow; equilibrium matches within 1.7e-5."
         else:
-            diff_end_str = f"{sd['max_diff_end']:.6f} m"
-            diff_eq_str = f"{sd['max_diff_eq']:.6f} m"
-            note = "Equilibrium initiated."
-        lines.append(f"| Scenario {sc_num}: {sd['title']} | {diff_end_str} | {diff_eq_str} | {note} |")
+            max_eq = max(sd['max_flow_eq'], sd['max_head_eq'])
+            note = f"Starts at equilibrium; DAE and EPANET agree within {max_eq:.2e} m."
+        lines.append(
+            f"| Scenario {sc_num}: {sd['title']} | {sd['max_flow_end']:.6f} | {sd['max_head_end']:.6f} | "
+            f"{sd['max_flow_eq']:.6f} | {sd['max_head_eq']:.6f} | {note} |"
+        )
     lines.append("")
     lines.append("Note on Scenario 1: The DAE starts from rest and needs time to reach the steady flow, EPANET gives the steady flow directly, so a difference at t = 60 s is expected; the equilibrium columns compare the DAE's own steady value.")
     lines.append("")
@@ -313,7 +322,7 @@ def generate_acceptance_report():
     lines.append("")
     lines.append("1. Pencil parameters (b1, b2, beta), gravity vector terms, and determinants match the reference formulas within 1e-9.")
     lines.append("2. Mode steady states match the reference numbers within 5e-7 (reference values given to 6 decimal places).")
-    lines.append("3. Dirac impulse coefficients match the analytical momentum values (+62.16 m / -38.85 m / +62.16 m).")
+    lines.append("3. Dirac impulse coefficients match the analytical momentum values (+62.16 m*s / -38.85 m*s / +62.16 m*s).")
     lines.append("4. Steady states and interval equilibria between the DAE solver and official EPANET 2.3.5 engine match within 1.7e-5 across all scenarios.")
     lines.append("")
     lines.append("---")
